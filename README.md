@@ -43,6 +43,14 @@ python script.py delete --spec example.yaml --region us-east-1
 python script.py monitor --spec example.yaml --region us-east-1
 ```
 
+### Using AWS Profiles
+```bash
+# Use a specific AWS profile
+python script.py create --spec example.yaml --profile my-profile
+
+# Profile can also be specified in the YAML file itself
+```
+
 ### Dry Run
 ```bash
 python script.py create --spec example.yaml --dry-run
@@ -53,6 +61,9 @@ python script.py create --spec example.yaml --dry-run
 Create a YAML specification file with your desired infrastructure:
 
 ```yaml
+# Optional: AWS profile for authentication
+profile: "my-aws-profile"
+
 instances:
   - name: "web-server"
     instance_type: "t3.micro"
@@ -99,10 +110,43 @@ The `examples/` directory contains pre-built scripts for common scenarios:
 
 ## AWS Credentials
 
-Ensure AWS credentials are configured via:
-- Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-- AWS CLI (`aws configure`)
-- IAM roles (for EC2 instances)
+The script supports multiple methods for AWS authentication:
+
+### Method 1: Environment Variables
+```bash
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_DEFAULT_REGION="us-east-1"
+```
+
+### Method 2: AWS CLI Profile
+```bash
+# Configure a profile
+aws configure --profile my-profile
+
+# Use the profile via command line
+python script.py create --spec example.yaml --profile my-profile
+```
+
+### Method 3: YAML Specification Profile
+```yaml
+# Add profile to your YAML specification
+profile: "my-aws-profile"
+
+instances:
+  - name: "web-server"
+    instance_type: "t3.micro"
+    # ... rest of configuration
+```
+
+### Method 4: IAM Roles
+When running on EC2 instances, IAM roles are automatically used.
+
+### Profile Precedence
+1. Command line `--profile` argument (highest priority)
+2. `profile` field in YAML specification  
+3. Default AWS credentials (environment variables or default profile)
+4. IAM roles (when running on EC2)
 
 ## License
 
@@ -173,6 +217,7 @@ python script.py monitor --spec example_spec.yaml --region us-west-2
 - `action`: Required. Either "create", "delete", or "monitor"
 - `--spec, -s`: Required. Path to the YAML specification file
 - `--region, -r`: Optional. AWS region (default: us-east-1)
+- `--profile, -p`: Optional. AWS profile name to use for authentication
 - `--dry-run`: Optional. Show what would be done without executing (create/delete only)
 
 ## Examples

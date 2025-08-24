@@ -24,15 +24,28 @@ from botocore.exceptions import ClientError
 class AWSResourceManager:
     """Manages AWS EC2 instances and EBS volumes with idempotency and rollback support."""
 
-    def __init__(self, region: str = "us-east-1"):
+    def __init__(self, region: str = "us-east-1", profile: str = None):
         """Initialize the AWS resource manager.
 
         Args:
             region: AWS region to operate in
+            profile: AWS profile name to use for authentication
         """
         self.region = region
-        self.ec2_client = boto3.client("ec2", region_name=region)
-        self.ec2_resource = boto3.resource("ec2", region_name=region)
+        self.profile = profile
+        
+        # Create boto3 session with or without profile
+        if profile:
+            self.session = boto3.Session(profile_name=profile)
+            self.logger = logging.getLogger(__name__)
+            self.logger.info(f"Using AWS profile: {profile}")
+        else:
+            self.session = boto3.Session()
+            self.logger = logging.getLogger(__name__)
+            self.logger.info("Using default AWS credentials (environment variables or default profile)")
+        
+        self.ec2_client = self.session.client("ec2", region_name=region)
+        self.ec2_resource = self.session.resource("ec2", region_name=region)
         self.created_resources = {"instances": [], "volumes": []}
 
         # Setup logging
@@ -44,7 +57,7 @@ class AWSResourceManager:
                 logging.StreamHandler(sys.stdout),
             ],
         )
-        self.logger = logging.getLogger(__name__)
+        # Logger was already initialized above, so we don't need to reinitialize it
 
     def load_specification(self, spec_file: str) -> Dict[str, Any]:
         """Load and validate YAML specification file.
@@ -86,6 +99,11 @@ class AWSResourceManager:
         for field in required_fields:
             if field not in spec:
                 raise ValueError(f"Missing required field in specification: {field}")
+
+        # Validate optional profile field
+        if "profile" in spec:
+            if not isinstance(spec["profile"], str):
+                raise ValueError("Profile field must be a string")
 
         for i, instance in enumerate(spec["instances"]):
             required_instance_fields = ["name", "instance_type", "ami_id"]
@@ -642,6 +660,9 @@ def main():
         "--region", "-r", default="us-east-1", help="AWS region (default: us-east-1)"
     )
     parser.add_argument(
+        "--profile", "-p", help="AWS profile name to use for authentication"
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be done without actually doing it",
@@ -650,11 +671,22 @@ def main():
     args = parser.parse_args()
 
     try:
-        manager = AWSResourceManager(region=args.region)
+        # Load specification first to check for profile in YAML
+        with open(args.spec, "r") as f:
+            spec = yaml.safe_load(f)
+        
+        # Determine which profile to use (command line takes precedence over YAML)
+        profile_to_use = args.profile or spec.get("profile")
+        
+        manager = AWSResourceManager(region=args.region, profile=profile_to_use)
         spec = manager.load_specification(args.spec)
 
         if args.dry_run and args.action != "monitor":
             print(f"DRY RUN: Would {args.action} resources according to specification:")
+            if profile_to_use:
+                print(f"Using AWS profile: {profile_to_use}")
+            else:
+                print("Using default AWS credentials")
             print(yaml.dump(spec, default_flow_style=False))
             return
 
@@ -667,7 +699,10 @@ def main():
             if has_user_data:
                 print("\nInstances with user data scripts detected.")
                 print("You can monitor user data execution with:")
-                print(f"python script.py monitor --spec {args.spec} --region {args.region}")
+                monitor_cmd = f"python script.py monitor --spec {args.spec} --region {args.region}"
+                if profile_to_use:
+                    monitor_cmd += f" --profile {profile_to_use}"
+                print(monitor_cmd)
                 
         elif args.action == "delete":
             manager.delete_resources(spec)

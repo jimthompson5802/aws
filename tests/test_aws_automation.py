@@ -34,8 +34,19 @@ class TestAWSResourceManager:
     @pytest.fixture
     def aws_manager(self):
         """Create an AWSResourceManager instance with mocked AWS clients."""
-        with patch("boto3.client"), patch("boto3.resource"):
+        with patch("boto3.Session") as mock_session:
+            mock_session.return_value.client.return_value = MagicMock()
+            mock_session.return_value.resource.return_value = MagicMock()
             manager = AWSResourceManager(region="us-east-1")
+            return manager
+
+    @pytest.fixture
+    def aws_manager_with_profile(self):
+        """Create an AWSResourceManager instance with profile and mocked AWS clients."""
+        with patch("boto3.Session") as mock_session:
+            mock_session.return_value.client.return_value = MagicMock()
+            mock_session.return_value.resource.return_value = MagicMock()
+            manager = AWSResourceManager(region="us-east-1", profile="test-profile")
             return manager
 
     def test_specification_validation_valid(self, aws_manager, sample_spec):
@@ -97,6 +108,61 @@ class TestAWSResourceManager:
         assert result == sample_spec
         mock_open.assert_called_once_with("test.yaml", "r")
         mock_yaml_load.assert_called_once_with(mock_file)
+
+    def test_aws_manager_with_profile(self, aws_manager_with_profile):
+        """Test that AWSResourceManager correctly initializes with a profile."""
+        assert aws_manager_with_profile.profile == "test-profile"
+        assert aws_manager_with_profile.region == "us-east-1"
+
+    def test_aws_manager_without_profile(self, aws_manager):
+        """Test that AWSResourceManager correctly initializes without a profile."""
+        assert aws_manager.profile is None
+        assert aws_manager.region == "us-east-1"
+
+    def test_specification_validation_with_valid_profile(self, aws_manager):
+        """Test that specifications with valid profile pass validation."""
+        spec_with_profile = {
+            "profile": "my-test-profile",
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                }
+            ]
+        }
+        # Should not raise any exception
+        aws_manager._validate_specification(spec_with_profile)
+
+    def test_specification_validation_with_invalid_profile(self, aws_manager):
+        """Test that specifications with invalid profile type fail validation."""
+        spec_with_invalid_profile = {
+            "profile": 123,  # Should be string, not int
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                }
+            ]
+        }
+        
+        with pytest.raises(ValueError, match="Profile field must be a string"):
+            aws_manager._validate_specification(spec_with_invalid_profile)
+
+    @patch("boto3.Session")
+    def test_profile_usage_in_constructor(self, mock_session):
+        """Test that profile is correctly passed to boto3.Session."""
+        # Test with profile
+        AWSResourceManager(region="us-west-2", profile="test-profile")
+        mock_session.assert_called_with(profile_name="test-profile")
+        
+        # Reset mock
+        mock_session.reset_mock()
+        
+        # Test without profile
+        AWSResourceManager(region="us-west-2", profile=None)
+        mock_session.assert_called_with()
 
 
 class TestSpecificationValidation:

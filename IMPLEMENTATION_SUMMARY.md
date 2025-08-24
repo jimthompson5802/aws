@@ -12,10 +12,19 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **EBS Volume Management**: Automated creation and attachment of storage volumes
 - **User Data Script Support**: Complete implementation of bash script execution on instance startup
 - **Script Monitoring**: Real-time monitoring and log retrieval for user data execution
+- **AWS Profile Support**: Complete implementation of AWS profile authentication (NEW)
 - **Idempotency**: Prevention of duplicate resource creation
 - **Error Handling**: Comprehensive error handling with automatic rollback
 - **Logging**: Detailed logging to both console and file
 - **Resource Deletion**: Clean teardown of provisioned resources
+
+### ✅ AWS Profile Authentication Implementation (NEW)
+- **Command Line Profile**: `--profile` argument for specifying AWS profiles
+- **YAML Profile Configuration**: `profile` field in YAML specifications
+- **Profile Precedence**: Command line profile overrides YAML profile
+- **Fallback to Default**: Automatic fallback to environment variables/default profile
+- **Comprehensive Validation**: Profile field validation in YAML specifications
+- **Enhanced Documentation**: Complete documentation of all authentication methods
 
 ### ✅ User Data Implementation (NEW)
 - **Script Path Support**: Load user data scripts from external files
@@ -26,11 +35,12 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **Example Scripts**: Five pre-built scripts for common scenarios
 
 ### ✅ Technical Implementation
-- **boto3 Integration**: Full AWS SDK integration for EC2 and EBS operations
-- **Command Line Interface**: Professional CLI with argparse (now includes monitor command)
-- **Input Validation**: Robust YAML specification validation including user data
+- **boto3 Integration**: Full AWS SDK integration for EC2 and EBS operations with session management
+- **Command Line Interface**: Professional CLI with argparse (includes monitor command and profile support)
+- **Input Validation**: Robust YAML specification validation including user data and profile
 - **Region Support**: Configurable AWS region (defaults to us-east-1)
-- **Dry Run Mode**: Preview functionality without making changes
+- **Profile Support**: Complete AWS profile authentication system
+- **Dry Run Mode**: Preview functionality without making changes (shows profile information)
 - **Error Recovery**: Automatic rollback on partial failures
 
 ### ✅ Deliverables
@@ -44,10 +54,11 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 ## Files Created/Modified
 
 ### Core Implementation
-- `script.py` - Main automation script with full user data support
+- `script.py` - Main automation script with full user data and profile support
 - `example_spec.yaml` - Example YAML specification with user data examples
+- `example_with_profile.yaml` - Example YAML specification demonstrating profile feature (NEW)
 - `dev-requirements.txt` - Updated with boto3 and PyYAML dependencies
-- `README.md` - Comprehensive documentation with user data features
+- `README.md` - Comprehensive documentation with user data and profile features
 
 ### User Data Scripts (NEW)
 - `examples/python_web_server.sh` - Complete Python Flask web server setup
@@ -58,7 +69,7 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - `examples/README.md` - Comprehensive documentation for user data scripts
 
 ### Testing & Validation
-- `tests/test_aws_automation.py` - Comprehensive test suite including user data functionality
+- `tests/test_aws_automation.py` - Comprehensive test suite including user data and profile functionality
 - `tests/test_date_time.py` - Updated to import from correct module
 - `validate.py` - Standalone validation script
 
@@ -87,30 +98,56 @@ python script.py delete --spec example_spec.yaml
 
 # Dry run preview
 python script.py create --spec example_spec.yaml --dry-run
+
+# Monitor user data execution
+python script.py monitor --spec example_spec.yaml
 ```
 
-### 3. Spot Instance Support
+### 3. AWS Profile Authentication (NEW)
+```bash
+# Use specific AWS profile via command line
+python script.py create --spec example_spec.yaml --profile my-profile
+
+# Use profile specified in YAML
+python script.py create --spec example_with_profile.yaml
+
+# Command line profile takes precedence over YAML profile
+python script.py create --spec example_with_profile.yaml --profile override-profile
+```
+
+### 4. YAML Profile Configuration (NEW)
+```yaml
+# Optional profile at top level
+profile: "my-aws-profile"
+
+instances:
+  - name: "web-server"
+    instance_type: "t3.micro"
+    ami_id: "ami-0c02fb55956c7d316"
+```
+
+### 5. Spot Instance Support
 - Configurable spot pricing
 - Market type selection (on-demand vs spot)
 - Proper spot instance request handling
 
-### 4. Volume Management
+### 6. Volume Management
 - Multiple volume types (gp2, gp3, io1, io2, st1, sc1)
 - Encryption support
 - Custom IOPS configuration
 - Device mapping
 
-### 5. Idempotency
+### 7. Idempotency
 - Checks for existing resources by name tags
 - Prevents duplicate resource creation
 - Safe to run multiple times
 
-### 6. Error Handling & Rollback
+### 8. Error Handling & Rollback
 - Comprehensive exception handling
 - Automatic resource cleanup on failure
 - Detailed error logging
 
-### 7. Logging & Auditability
+### 9. Logging & Auditability
 - Dual logging (console + file)
 - Timestamps and log levels
 - Complete operation tracking
@@ -121,6 +158,8 @@ All tests pass successfully:
 - ✅ Specification validation tests
 - ✅ YAML loading tests  
 - ✅ Error handling tests
+- ✅ AWS profile authentication tests (NEW)
+- ✅ Profile precedence tests (NEW)
 - ✅ Date utility tests (legacy compatibility)
 - ✅ Command line interface tests
 
@@ -131,12 +170,15 @@ All tests pass successfully:
 # Install dependencies
 pip install -r dev-requirements.txt
 
-# Configure AWS credentials (via environment variables)
+# Method 1: Configure AWS credentials via environment variables
 export AWS_ACCESS_KEY_ID=your_access_key
 export AWS_SECRET_ACCESS_KEY=your_secret_key
 
-# Preview what will be created
-python script.py create --spec example_spec.yaml --dry-run
+# Method 2: Configure AWS profile
+aws configure --profile my-profile
+
+# Preview what will be created (with profile)
+python script.py create --spec example_spec.yaml --profile my-profile --dry-run
 
 # Create resources
 python script.py create --spec example_spec.yaml
