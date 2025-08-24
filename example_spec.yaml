@@ -1,0 +1,69 @@
+# Example YAML specification for AWS Compute and Storage Automation
+# This file demonstrates how to define EC2 instances and their associated storage
+
+instances:
+  - name: "web-server-1"
+    instance_type: "t3.micro"
+    ami_id: "ami-0c02fb55956c7d316"  # Amazon Linux 2 AMI (update for your region)
+    market_type: "on-demand"  # or "spot"
+    key_name: "my-key-pair"  # Optional: EC2 Key Pair name
+    security_groups:  # Optional: Security Group IDs
+      - "sg-12345678"
+    subnet_id: "subnet-12345678"  # Optional: Subnet ID
+    tags:  # Optional: Custom tags
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Project"
+        Value: "web-app"
+    volumes:  # Optional: Additional EBS volumes
+      - size: 20
+        type: "gp3"
+        device: "/dev/sdf"
+        iops: 3000  # Optional: for gp3, io1, io2
+        encrypted: true
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdg"
+        encrypted: false
+
+  - name: "app-server-1"
+    instance_type: "t3.small"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "spot"  # Spot instance
+    spot_price: "0.02"  # Optional: maximum spot price
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-87654321"
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Role"
+        Value: "application"
+    volumes:
+      - size: 30
+        type: "gp3"
+        device: "/dev/sdf"
+        encrypted: true
+
+  - name: "database-server-1"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "on-demand"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-11223344"
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Role"
+        Value: "database"
+    volumes:
+      - size: 100
+        type: "io2"
+        device: "/dev/sdf"
+        iops: 1000
+        encrypted: true
+      - size: 200
+        type: "gp3"
+        device: "/dev/sdg"
+        encrypted: true
