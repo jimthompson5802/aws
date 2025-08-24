@@ -15,6 +15,8 @@ instances:
         Value: "production"
       - Key: "Project"
         Value: "web-app"
+    user_data:  # Optional: User data script for instance customization
+      script_path: "examples/python_web_server.sh"  # Path to script file
     volumes:  # Optional: Additional EBS volumes
       - size: 20
         type: "gp3"
@@ -39,6 +41,23 @@ instances:
         Value: "production"
       - Key: "Role"
         Value: "application"
+    user_data:  # Example of inline script
+      inline_script: |
+        #!/bin/bash
+        yum update -y
+        yum install -y docker
+        systemctl start docker
+        systemctl enable docker
+        usermod -a -G docker ec2-user
+        
+        # Install application
+        mkdir -p /opt/app
+        cd /opt/app
+        git clone https://github.com/example/my-app.git .
+        docker build -t my-app .
+        docker run -d -p 80:8080 --name my-app-container my-app
+        
+        echo "Application setup completed!"
     volumes:
       - size: 30
         type: "gp3"
@@ -57,6 +76,8 @@ instances:
         Value: "production"
       - Key: "Role"
         Value: "database"
+    user_data:  # Database setup script
+      script_path: "examples/database_setup.sh"
     volumes:
       - size: 100
         type: "io2"
@@ -66,4 +87,25 @@ instances:
       - size: 200
         type: "gp3"
         device: "/dev/sdg"
+        encrypted: true
+
+  - name: "data-science-server"
+    instance_type: "m5.large"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "spot"
+    spot_price: "0.08"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-datascience"
+    tags:
+      - Key: "Environment"
+        Value: "development"
+      - Key: "Role"
+        Value: "data-science"
+    user_data:  # Data science environment setup
+      script_path: "examples/data_science_setup.sh"
+    volumes:
+      - size: 500
+        type: "gp3"
+        device: "/dev/sdf"
         encrypted: true

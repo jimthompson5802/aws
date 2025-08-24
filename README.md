@@ -8,6 +8,9 @@ This project automates the provisioning of AWS EC2 instances and associated stor
 - **Rollback Support**: Automatic cleanup on failure
 - **Spot Instance Support**: Cost optimization with spot instances
 - **EBS Volume Management**: Create and attach additional storage
+- **User Data Script Support**: Automate instance customization with bash scripts
+- **Script Monitoring**: Monitor user data script execution and retrieve logs
+- **Example Scripts**: Pre-built scripts for common scenarios (web servers, databases, etc.)
 - **Comprehensive Logging**: Detailed logs for debugging and auditing
 
 ## Requirements
@@ -35,6 +38,11 @@ python script.py create --spec example.yaml --region us-east-1
 python script.py delete --spec example.yaml --region us-east-1
 ```
 
+### Monitor User Data Execution
+```bash
+python script.py monitor --spec example.yaml --region us-east-1
+```
+
 ### Dry Run
 ```bash
 python script.py create --spec example.yaml --dry-run
@@ -51,11 +59,43 @@ instances:
     ami_id: "ami-0c55b159cbfafe1d0"
     key_name: "my-key"
     security_groups: ["sg-12345"]
+    user_data:  # Optional: Automate instance setup
+      script_path: "examples/python_web_server.sh"
     volumes:
       - size: 20
         type: "gp3"
         device: "/dev/sdf"
 ```
+
+## User Data Scripts
+
+The script supports two ways to specify user data for instance customization:
+
+### Using Script Files
+```yaml
+user_data:
+  script_path: "path/to/your/script.sh"
+```
+
+### Using Inline Scripts
+```yaml
+user_data:
+  inline_script: |
+    #!/bin/bash
+    yum update -y
+    yum install -y docker
+    systemctl start docker
+```
+
+## Example Scripts
+
+The `examples/` directory contains pre-built scripts for common scenarios:
+
+- **`python_web_server.sh`** - Complete Python Flask web server with nginx
+- **`data_science_setup.sh`** - Jupyter Lab and data science environment
+- **`docker_deployment.sh`** - Docker containerized application deployment  
+- **`database_setup.sh`** - MySQL database server with automated backups
+- **`dev_environment.sh`** - Development environment with VS Code server
 
 ## AWS Credentials
 
@@ -118,12 +158,22 @@ python script.py delete --spec example_spec.yaml
 python script.py delete --spec example_spec.yaml --region us-west-2
 ```
 
+### Monitoring User Data Execution
+
+```bash
+# Monitor user data script execution for all instances
+python script.py monitor --spec example_spec.yaml
+
+# Monitor in a specific region
+python script.py monitor --spec example_spec.yaml --region us-west-2
+```
+
 ### Command Line Options
 
-- `action`: Required. Either "create" or "delete"
+- `action`: Required. Either "create", "delete", or "monitor"
 - `--spec, -s`: Required. Path to the YAML specification file
 - `--region, -r`: Optional. AWS region (default: us-east-1)
-- `--dry-run`: Optional. Show what would be done without executing
+- `--dry-run`: Optional. Show what would be done without executing (create/delete only)
 
 ## Examples
 

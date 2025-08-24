@@ -94,6 +94,18 @@ class AWSResourceManager:
                     raise ValueError(
                         f"Missing required field '{field}' in instance {i}"
                     )
+            
+            # Validate user data configuration
+            if "user_data" in instance:
+                user_data = instance["user_data"]
+                if not isinstance(user_data, dict):
+                    raise ValueError(f"user_data must be an object in instance {i}")
+                
+                if "script_path" in user_data and "inline_script" in user_data:
+                    raise ValueError(f"Cannot specify both script_path and inline_script in instance {i}")
+                
+                if "script_path" not in user_data and "inline_script" not in user_data:
+                    raise ValueError(f"user_data must contain either script_path or inline_script in instance {i}")
 
         self.logger.info("Specification validation passed")
 
@@ -139,6 +151,72 @@ class AWSResourceManager:
                 self.logger.warning(f"Error checking for existing instances: {e}")
 
         return existing
+
+    def _prepare_user_data(self, instance_spec: Dict[str, Any]) -> str:
+        """Prepare user data script for instance.
+
+        Args:
+            instance_spec: Instance specification containing user data
+
+        Returns:
+            User data script content (base64 will be handled by boto3)
+
+        Raises:
+            FileNotFoundError: If script file doesn't exist
+            Exception: If script preparation fails
+        """
+        if "user_data" not in instance_spec:
+            return ""
+
+        user_data = instance_spec["user_data"]
+        
+        try:
+            if "script_path" in user_data:
+                # Load script from file
+                script_path = user_data["script_path"]
+                with open(script_path, "r") as f:
+                    script_content = f.read()
+                self.logger.info(f"Loaded user data script from {script_path}")
+            elif "inline_script" in user_data:
+                # Use inline script content
+                script_content = user_data["inline_script"]
+                self.logger.info("Using inline user data script")
+            else:
+                return ""
+
+            # Add logging wrapper to capture user data execution
+            wrapper_script = f'''#!/bin/bash
+# AWS Automation Script - User Data Execution
+# Instance: {instance_spec["name"]}
+# Generated: {datetime.now().isoformat()}
+
+LOG_FILE="/var/log/user-data-execution.log"
+exec > >(tee -a $LOG_FILE)
+exec 2>&1
+
+echo "===== User Data Script Execution Started ====="
+echo "Timestamp: $(date)"
+echo "Instance Name: {instance_spec["name"]}"
+echo "=============================================="
+
+# Original user script
+{script_content}
+
+echo "=============================================="
+echo "User Data Script Execution Completed"
+echo "Timestamp: $(date)"
+echo "Exit Code: $?"
+echo "=============================================="
+'''
+
+            return wrapper_script
+
+        except FileNotFoundError:
+            self.logger.error(f"User data script file not found: {user_data.get('script_path')}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Failed to prepare user data script: {e}")
+            raise
 
     def _create_ec2_instance(self, instance_spec: Dict[str, Any]) -> str:
         """Create a single EC2 instance.
@@ -195,6 +273,12 @@ class AWSResourceManager:
         if "tags" in instance_spec:
             for tag in instance_spec["tags"]:
                 instance_params["TagSpecifications"][0]["Tags"].append(tag)
+
+        # Add user data script if specified
+        user_data_script = self._prepare_user_data(instance_spec)
+        if user_data_script:
+            instance_params["UserData"] = user_data_script
+            self.logger.info(f"Added user data script to instance {instance_spec['name']}")
 
         try:
             response = self.ec2_client.run_instances(**instance_params)
@@ -452,6 +536,94 @@ class AWSResourceManager:
         # Delete volumes (they should be automatically deleted when instances are terminated if DeleteOnTermination is True)
         self.logger.info("Resource deletion completed")
 
+    def get_user_data_logs(self, instance_id: str) -> str:
+        """Retrieve user data execution logs from an instance.
+
+        Args:
+            instance_id: ID of the instance to get logs from
+
+        Returns:
+            User data execution logs
+
+        Raises:
+            ClientError: If unable to retrieve logs
+        """
+        try:
+            # Get console output which includes user data execution
+            response = self.ec2_client.get_console_output(InstanceId=instance_id)
+            console_output = response.get("Output", "")
+            
+            self.logger.info(f"Retrieved console output for instance {instance_id}")
+            
+            # Extract user data related logs
+            if "User Data Script Execution" in console_output:
+                lines = console_output.split('\n')
+                user_data_logs = []
+                capturing = False
+                
+                for line in lines:
+                    if "User Data Script Execution Started" in line:
+                        capturing = True
+                    if capturing:
+                        user_data_logs.append(line)
+                    if "User Data Script Execution Completed" in line:
+                        capturing = False
+                        break
+                
+                return '\n'.join(user_data_logs)
+            else:
+                return "No user data execution logs found in console output."
+                
+        except ClientError as e:
+            self.logger.error(f"Failed to retrieve console output for {instance_id}: {e}")
+            raise
+
+    def monitor_user_data_execution(self, spec: Dict[str, Any]) -> Dict[str, str]:
+        """Monitor user data script execution for all instances in the specification.
+
+        Args:
+            spec: Resource specification
+
+        Returns:
+            Dictionary mapping instance names to their user data execution logs
+        """
+        self.logger.info("Monitoring user data script execution...")
+        
+        logs = {}
+        
+        for instance_spec in spec["instances"]:
+            if "user_data" not in instance_spec:
+                continue
+                
+            instance_name = instance_spec["name"]
+            
+            # Find the instance by name tag
+            try:
+                response = self.ec2_client.describe_instances(
+                    Filters=[
+                        {"Name": "tag:Name", "Values": [instance_name]},
+                        {"Name": "instance-state-name", "Values": ["running"]},
+                    ]
+                )
+                
+                for reservation in response["Reservations"]:
+                    for instance in reservation["Instances"]:
+                        instance_id = instance["InstanceId"]
+                        
+                        try:
+                            user_data_logs = self.get_user_data_logs(instance_id)
+                            logs[instance_name] = user_data_logs
+                            self.logger.info(f"Retrieved user data logs for {instance_name} ({instance_id})")
+                        except Exception as e:
+                            logs[instance_name] = f"Failed to retrieve logs: {e}"
+                            self.logger.error(f"Failed to retrieve user data logs for {instance_name}: {e}")
+                            
+            except ClientError as e:
+                logs[instance_name] = f"Failed to find instance: {e}"
+                self.logger.error(f"Failed to find instance {instance_name}: {e}")
+        
+        return logs
+
 
 def main():
     """Main function to handle command line arguments and execute the script."""
@@ -459,7 +631,9 @@ def main():
         description="AWS Compute and Storage Automation Script"
     )
     parser.add_argument(
-        "action", choices=["create", "delete"], help="Action to perform"
+        "action", 
+        choices=["create", "delete", "monitor"], 
+        help="Action to perform: create resources, delete resources, or monitor user data execution"
     )
     parser.add_argument(
         "--spec", "-s", required=True, help="Path to YAML specification file"
@@ -479,7 +653,7 @@ def main():
         manager = AWSResourceManager(region=args.region)
         spec = manager.load_specification(args.spec)
 
-        if args.dry_run:
+        if args.dry_run and args.action != "monitor":
             print(f"DRY RUN: Would {args.action} resources according to specification:")
             print(yaml.dump(spec, default_flow_style=False))
             return
@@ -487,9 +661,27 @@ def main():
         if args.action == "create":
             resources = manager.provision_resources(spec)
             print(f"Successfully created resources: {resources}")
+            
+            # Check if any instances have user data and offer to monitor
+            has_user_data = any("user_data" in inst for inst in spec["instances"])
+            if has_user_data:
+                print("\nInstances with user data scripts detected.")
+                print("You can monitor user data execution with:")
+                print(f"python script.py monitor --spec {args.spec} --region {args.region}")
+                
         elif args.action == "delete":
             manager.delete_resources(spec)
             print("Successfully deleted resources")
+            
+        elif args.action == "monitor":
+            logs = manager.monitor_user_data_execution(spec)
+            print("\nUser Data Execution Logs:")
+            print("=" * 50)
+            for instance_name, log_content in logs.items():
+                print(f"\nInstance: {instance_name}")
+                print("-" * 30)
+                print(log_content)
+                print("-" * 30)
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

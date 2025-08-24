@@ -10,36 +10,55 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **YAML Configuration**: Complete support for YAML-based infrastructure definitions
 - **EC2 Instance Provisioning**: Support for both on-demand and spot instances
 - **EBS Volume Management**: Automated creation and attachment of storage volumes
+- **User Data Script Support**: Complete implementation of bash script execution on instance startup
+- **Script Monitoring**: Real-time monitoring and log retrieval for user data execution
 - **Idempotency**: Prevention of duplicate resource creation
 - **Error Handling**: Comprehensive error handling with automatic rollback
 - **Logging**: Detailed logging to both console and file
 - **Resource Deletion**: Clean teardown of provisioned resources
 
+### ✅ User Data Implementation (NEW)
+- **Script Path Support**: Load user data scripts from external files
+- **Inline Script Support**: Embed scripts directly in YAML specifications
+- **Execution Logging**: Comprehensive logging wrapper for all user data scripts
+- **Script Validation**: Robust validation of user data configurations
+- **Log Monitoring**: Retrieve and display user data execution logs
+- **Example Scripts**: Five pre-built scripts for common scenarios
+
 ### ✅ Technical Implementation
 - **boto3 Integration**: Full AWS SDK integration for EC2 and EBS operations
-- **Command Line Interface**: Professional CLI with argparse
-- **Input Validation**: Robust YAML specification validation
+- **Command Line Interface**: Professional CLI with argparse (now includes monitor command)
+- **Input Validation**: Robust YAML specification validation including user data
 - **Region Support**: Configurable AWS region (defaults to us-east-1)
 - **Dry Run Mode**: Preview functionality without making changes
 - **Error Recovery**: Automatic rollback on partial failures
 
 ### ✅ Deliverables
-1. **Python Script**: Complete implementation in `script.py`
-2. **Example YAML**: Comprehensive example specification (`example_spec.yaml`)
-3. **Documentation**: Detailed README with usage instructions
-4. **Testing**: Unit tests and validation scripts
-5. **Requirements**: Proper dependency management
+1. **Python Script**: Complete implementation in `script.py` with user data support
+2. **Example YAML**: Comprehensive example specification (`example_spec.yaml`) with user data examples
+3. **User Data Scripts**: Five example scripts in `examples/` directory
+4. **Documentation**: Detailed README with usage instructions and examples README
+5. **Testing**: Comprehensive unit tests including user data functionality
+6. **Requirements**: Proper dependency management
 
 ## Files Created/Modified
 
 ### Core Implementation
-- `script.py` - Main automation script (replaced existing template)
-- `example_spec.yaml` - Example YAML specification
+- `script.py` - Main automation script with full user data support
+- `example_spec.yaml` - Example YAML specification with user data examples
 - `dev-requirements.txt` - Updated with boto3 and PyYAML dependencies
-- `README.md` - Comprehensive documentation
+- `README.md` - Comprehensive documentation with user data features
+
+### User Data Scripts (NEW)
+- `examples/python_web_server.sh` - Complete Python Flask web server setup
+- `examples/data_science_setup.sh` - Jupyter Lab and data science environment
+- `examples/docker_deployment.sh` - Docker containerized application deployment
+- `examples/database_setup.sh` - MySQL database server with backup automation
+- `examples/dev_environment.sh` - Complete development environment with VS Code server
+- `examples/README.md` - Comprehensive documentation for user data scripts
 
 ### Testing & Validation
-- `tests/test_aws_automation.py` - Comprehensive test suite for AWS functionality
+- `tests/test_aws_automation.py` - Comprehensive test suite including user data functionality
 - `tests/test_date_time.py` - Updated to import from correct module
 - `validate.py` - Standalone validation script
 
