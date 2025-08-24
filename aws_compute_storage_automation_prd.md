@@ -58,7 +58,8 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
 - Script should be runnable from the command line.
 - Support for at least one AWS region, defaulting to **us-east** (configurable).
 - Documentation for usage and input specification.
-- Assume AWS credentials are provided via **environment variables**.
+- **AWS credentials must be obtained from either environment variables or an AWS profile specified by the user.**
+- If a profile is specified (e.g., via a `--profile` command-line argument or in the YAML spec), use that profile; otherwise, default to environment variables.
 
 ## Out of Scope
 - Configuration of software inside the EC2 instance beyond what's specified in the user data script.
