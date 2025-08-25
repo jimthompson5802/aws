@@ -39,7 +39,13 @@ instances:
 - **Comparison**: Less than threshold
 - **Evaluation Periods**: Calculated as `evaluation_minutes / 5`
 - **Actions**: Auto-scaling actions to stop or terminate instance
-- **Missing Data**: Treated as breaching (triggers alarm)
+- **Missing Data**: Treated as not breaching (prevents shutdown during startup or when insufficient data is available)
+
+**Important: Startup Protection**
+- The alarm is configured to treat missing data as "not breaching" to prevent accidental shutdown during instance startup
+- This ensures that instances are not terminated when they first boot up and CloudWatch hasn't yet collected sufficient CPU metrics
+- Only instances with sufficient monitoring data and confirmed low CPU utilization will trigger the alarm
+- This aligns with the PRD requirement: "Do not shutdown the instance when the EC2 instance first starts up and is missing alert data"
 
 ### 3. Resource Cleanup
 

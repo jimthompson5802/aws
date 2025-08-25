@@ -17,7 +17,7 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
      - Instance market type: support both **on-demand and spot instances**.
      - Storage volumes: size, type, device mapping, IOPS, encrypted, etc.
      - **User data script**: optional bash script path or inline script content for instance customization.
-     - **Idle Shutdown Policy**: optional configuration to define a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., low CPU utilization) for a pre-defined time period.
+     - **Idle Shutdown Policy**: optional configuration to define a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., low CPU utilization) for a pre-defined time period.  Do not shutdown the instance when the EC2 instance first starts up and is missing alert data.  Only shutdown the instance if there is sufficient alert data to determine that the instance is idle.
 
 2. **Resource Provisioning** ✅ IMPLEMENTED
    - Create one or more EC2 instance(s) as per the specification.

@@ -138,6 +138,8 @@ instances:
 4. The instance is automatically stopped or terminated based on the configured action
 5. When deleting resources, associated CloudWatch alarms are automatically removed
 
+**Startup Protection**: The alarm is configured to prevent shutdown during instance startup when CloudWatch hasn't yet collected sufficient CPU metrics. Only instances with confirmed low CPU utilization over the evaluation period will trigger the alarm.
+
 ### Use Cases
 
 - **Development environments**: Automatically stop development instances after hours

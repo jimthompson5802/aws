@@ -460,8 +460,9 @@ class TestUserDataPrepation:
         instance_id = "i-1234567890abcdef0"
         expected_alarm_name = f"idle-shutdown-{instance_spec['name']}-{instance_id}"
         
-        # Mock CloudWatch client
-        aws_manager.cloudwatch_client.put_metric_alarm.return_value = {}
+        # Mock CloudWatch client methods
+        aws_manager.cloudwatch_client.put_metric_alarm = MagicMock()
+        aws_manager.cloudwatch_client.describe_alarms = MagicMock(return_value={"MetricAlarms": []})
         
         result = aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
         
@@ -477,6 +478,7 @@ class TestUserDataPrepation:
         assert call_args["Threshold"] == 10.0
         assert call_args["ComparisonOperator"] == "LessThanThreshold"
         assert call_args["EvaluationPeriods"] == 3  # 15 minutes / 5 minute periods
+        assert call_args["TreatMissingData"] == "notBreaching"  # Startup protection
         assert "ec2:stop" in call_args["AlarmActions"][0]
 
     def test_create_idle_shutdown_alarm_terminate(self, aws_manager):
@@ -492,13 +494,15 @@ class TestUserDataPrepation:
         
         instance_id = "i-1234567890abcdef0"
         
-        # Mock CloudWatch client
-        aws_manager.cloudwatch_client.put_metric_alarm.return_value = {}
+        # Mock CloudWatch client methods
+        aws_manager.cloudwatch_client.put_metric_alarm = MagicMock()
+        aws_manager.cloudwatch_client.describe_alarms = MagicMock(return_value={"MetricAlarms": []})
         
         aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
         
         # Verify the action is terminate
         call_args = aws_manager.cloudwatch_client.put_metric_alarm.call_args[1]
+        assert call_args["TreatMissingData"] == "notBreaching"  # Startup protection
         assert "ec2:terminate" in call_args["AlarmActions"][0]
 
     def test_create_idle_shutdown_alarm_no_config(self, aws_manager):
@@ -510,6 +514,9 @@ class TestUserDataPrepation:
         }
         
         instance_id = "i-1234567890abcdef0"
+        
+        # Mock CloudWatch client methods
+        aws_manager.cloudwatch_client.put_metric_alarm = MagicMock()
         
         result = aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
         

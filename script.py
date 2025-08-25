@@ -499,7 +499,7 @@ echo "=============================================="
                 EvaluationPeriods=evaluation_minutes // 5,  # Convert minutes to 5-minute periods
                 Threshold=cpu_threshold,
                 ComparisonOperator="LessThanThreshold",
-                TreatMissingData="breaching"  # Treat missing data as breaching threshold
+                TreatMissingData="notBreaching"  # Don't shutdown when missing data (e.g., during startup)
             )
             
             self.logger.info(f"Created CloudWatch alarm: {alarm_name} for instance {instance_id}")
