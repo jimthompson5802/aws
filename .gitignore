@@ -52,3 +52,7 @@ Thumbs.db
 # Configuration files that might contain secrets
 config.yaml
 secrets.yaml
+
+
+# real configurations
+setup/
