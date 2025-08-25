@@ -568,7 +568,7 @@ echo "=============================================="
         """
         try:
             # Get console output which includes user data execution
-            response = self.ec2_client.get_console_output(InstanceId=instance_id)
+            response = self.ec2_client.get_console_output(InstanceId=instance_id, Latest=True)
             console_output = response.get("Output", "")
             
             self.logger.info(f"Retrieved console output for instance {instance_id}")
