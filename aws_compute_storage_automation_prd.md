@@ -17,12 +17,14 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
      - Instance market type: support both **on-demand and spot instances**.
      - Storage volumes: size, type, device mapping, IOPS, encrypted, etc.
      - **User data script**: optional bash script path or inline script content for instance customization.
+     - **Idle Shutdown Policy**: optional configuration to define a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., low CPU utilization) for a pre-defined time period.
 
 2. **Resource Provisioning** ✅ IMPLEMENTED
    - Create one or more EC2 instance(s) as per the specification.
    - Attach EBS volumes as specified.
    - Tag resources appropriately.
    - **Execute user data script on instance startup** (if specified).
+   - **Configure CloudWatch Alarm for Idle Shutdown**: If specified in the YAML, create a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., CPU utilization below a threshold) for a specified duration.
 
 3. **Instance Customization** ✅ IMPLEMENTED
    - Support for specifying a bash script that runs on EC2 instance startup via user data.
@@ -48,6 +50,7 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
 
 7. **Resource Deletion** ✅ IMPLEMENTED
    - The script should support deletion/teardown of resources as specified.
+   - **Remove associated CloudWatch alarms when deleting EC2 instances.**
 
 8. **User Data Monitoring** ✅ NEW FEATURE ADDED
    - Monitor and retrieve user data script execution logs from instances.
@@ -80,6 +83,7 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
   - `dev_environment.sh` - Complete development environment with VS Code server
 - **User data monitoring functionality** - Monitor script execution status
 - **Enhanced YAML specification** with user data examples
+- **CloudWatch idle shutdown alarm support**: Example YAML and documentation for configuring idle shutdown alarms.
 
 ## Open Questions
 - None (all clarified).
