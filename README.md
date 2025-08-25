@@ -9,6 +9,7 @@ This project automates the provisioning of AWS EC2 instances and associated stor
 - **Spot Instance Support**: Cost optimization with spot instances
 - **EBS Volume Management**: Create and attach additional storage
 - **User Data Script Support**: Automate instance customization with bash scripts
+- **CloudWatch Idle Shutdown**: Automatically stop/terminate idle instances to save costs
 - **Script Monitoring**: Monitor user data script execution and retrieve logs
 - **Example Scripts**: Pre-built scripts for common scenarios (web servers, databases, etc.)
 - **Comprehensive Logging**: Detailed logs for debugging and auditing
@@ -41,6 +42,11 @@ python script.py delete --spec example.yaml --region us-east-1
 ### Monitor User Data Execution
 ```bash
 python script.py monitor --spec example.yaml --region us-east-1
+```
+
+### Monitor CloudWatch Alarms
+```bash
+python script.py monitor-alarms --spec example.yaml --region us-east-1
 ```
 
 ### Using AWS Profiles
@@ -97,6 +103,67 @@ user_data:
     yum install -y docker
     systemctl start docker
 ```
+
+## CloudWatch Idle Shutdown
+
+The script supports automatic shutdown of EC2 instances when they are idle using CloudWatch alarms. This feature helps optimize costs by stopping or terminating instances that are not being actively used.
+
+### Configuration
+
+```yaml
+instances:
+  - name: "development-server"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"
+    # ... other configuration ...
+    idle_shutdown:
+      cpu_threshold: 10.0          # Stop when CPU < 10%
+      evaluation_minutes: 15       # For 15 minutes continuously
+      action: "stop"               # "stop" or "terminate"
+```
+
+### Idle Shutdown Parameters
+
+- `cpu_threshold`: CPU utilization threshold (0-100). Instance will be stopped/terminated when CPU falls below this percentage
+- `evaluation_minutes`: Number of minutes the CPU must remain below the threshold before taking action
+- `action`: Action to take when idle condition is met:
+  - `"stop"`: Stop the instance (can be restarted later, preserves instance store)
+  - `"terminate"`: Terminate the instance (permanently destroys the instance)
+
+### How It Works
+
+1. When an instance is created, a CloudWatch alarm is automatically created
+2. The alarm monitors CPU utilization every 5 minutes
+3. If CPU stays below the threshold for the specified duration, the alarm triggers
+4. The instance is automatically stopped or terminated based on the configured action
+5. When deleting resources, associated CloudWatch alarms are automatically removed
+
+### Use Cases
+
+- **Development environments**: Automatically stop development instances after hours
+- **Batch processing**: Terminate instances when jobs complete
+- **Cost optimization**: Reduce costs for underutilized instances
+- **Spot instances**: Automatic cleanup for cost-sensitive workloads
+
+### Example Configurations
+
+```yaml
+# Conservative shutdown for production workloads
+idle_shutdown:
+  cpu_threshold: 5.0
+  evaluation_minutes: 30
+  action: "stop"
+
+# Aggressive shutdown for development/testing
+idle_shutdown:
+  cpu_threshold: 15.0
+  evaluation_minutes: 10
+  action: "terminate"
+
+# No idle shutdown (omit the idle_shutdown section entirely)
+```
+
+**Note**: CloudWatch alarms are automatically cleaned up when instances are terminated through the script's delete command.
 
 ## Example Scripts
 
@@ -214,7 +281,7 @@ python script.py monitor --spec example_spec.yaml --region us-west-2
 
 ### Command Line Options
 
-- `action`: Required. Either "create", "delete", or "monitor"
+- `action`: Required. One of "create", "delete", "monitor", or "monitor-alarms"
 - `--spec, -s`: Required. Path to the YAML specification file
 - `--region, -r`: Optional. AWS region (default: us-east-1)
 - `--profile, -p`: Optional. AWS profile name to use for authentication

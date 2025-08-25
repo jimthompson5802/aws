@@ -389,6 +389,134 @@ class TestUserDataPrepation:
         assert "User Data Script Execution Started" in result
         assert instance_spec["name"] in result
 
+    def test_validate_idle_shutdown_config(self, aws_manager):
+        """Test validation of idle shutdown configuration."""
+        # Valid configuration
+        valid_spec = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "idle_shutdown": {
+                        "cpu_threshold": 10.0,
+                        "evaluation_minutes": 15,
+                        "action": "stop"
+                    }
+                }
+            ]
+        }
+        
+        # Should not raise an exception
+        aws_manager._validate_specification(valid_spec)
+        
+        # Invalid threshold (out of range)
+        invalid_spec = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "idle_shutdown": {
+                        "cpu_threshold": 150.0,  # Invalid: > 100
+                        "evaluation_minutes": 15
+                    }
+                }
+            ]
+        }
+        
+        with pytest.raises(ValueError, match="cpu_threshold must be a number between 0 and 100"):
+            aws_manager._validate_specification(invalid_spec)
+        
+        # Invalid evaluation_minutes (negative)
+        invalid_spec2 = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "idle_shutdown": {
+                        "cpu_threshold": 10.0,
+                        "evaluation_minutes": -5  # Invalid: negative
+                    }
+                }
+            ]
+        }
+        
+        with pytest.raises(ValueError, match="evaluation_minutes must be a positive integer"):
+            aws_manager._validate_specification(invalid_spec2)
+
+    def test_create_idle_shutdown_alarm(self, aws_manager):
+        """Test CloudWatch alarm creation for idle shutdown."""
+        instance_spec = {
+            "name": "test-instance",
+            "idle_shutdown": {
+                "cpu_threshold": 10.0,
+                "evaluation_minutes": 15,
+                "action": "stop"
+            }
+        }
+        
+        instance_id = "i-1234567890abcdef0"
+        expected_alarm_name = f"idle-shutdown-{instance_spec['name']}-{instance_id}"
+        
+        # Mock CloudWatch client
+        aws_manager.cloudwatch_client.put_metric_alarm.return_value = {}
+        
+        result = aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
+        
+        assert result == expected_alarm_name
+        assert expected_alarm_name in aws_manager.created_resources["alarms"]
+        
+        # Verify the CloudWatch API call
+        aws_manager.cloudwatch_client.put_metric_alarm.assert_called_once()
+        call_args = aws_manager.cloudwatch_client.put_metric_alarm.call_args[1]
+        
+        assert call_args["AlarmName"] == expected_alarm_name
+        assert call_args["MetricName"] == "CPUUtilization"
+        assert call_args["Threshold"] == 10.0
+        assert call_args["ComparisonOperator"] == "LessThanThreshold"
+        assert call_args["EvaluationPeriods"] == 3  # 15 minutes / 5 minute periods
+        assert "ec2:stop" in call_args["AlarmActions"][0]
+
+    def test_create_idle_shutdown_alarm_terminate(self, aws_manager):
+        """Test CloudWatch alarm creation with terminate action."""
+        instance_spec = {
+            "name": "test-instance",
+            "idle_shutdown": {
+                "cpu_threshold": 5.0,
+                "evaluation_minutes": 10,
+                "action": "terminate"
+            }
+        }
+        
+        instance_id = "i-1234567890abcdef0"
+        
+        # Mock CloudWatch client
+        aws_manager.cloudwatch_client.put_metric_alarm.return_value = {}
+        
+        aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
+        
+        # Verify the action is terminate
+        call_args = aws_manager.cloudwatch_client.put_metric_alarm.call_args[1]
+        assert "ec2:terminate" in call_args["AlarmActions"][0]
+
+    def test_create_idle_shutdown_alarm_no_config(self, aws_manager):
+        """Test that no alarm is created when idle_shutdown is not configured."""
+        instance_spec = {
+            "name": "test-instance",
+            "instance_type": "t3.micro",
+            "ami_id": "ami-12345678"
+        }
+        
+        instance_id = "i-1234567890abcdef0"
+        
+        result = aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
+        
+        assert result is None
+        assert len(aws_manager.created_resources["alarms"]) == 0
+        aws_manager.cloudwatch_client.put_metric_alarm.assert_not_called()
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

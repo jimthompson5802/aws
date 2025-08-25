@@ -34,6 +34,16 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **Log Monitoring**: Retrieve and display user data execution logs
 - **Example Scripts**: Five pre-built scripts for common scenarios
 
+### ✅ CloudWatch Idle Shutdown Implementation (NEW)
+- **Idle Detection Configuration**: YAML-based configuration for CPU threshold and evaluation time
+- **Automatic Alarm Creation**: CloudWatch alarms created during instance provisioning
+- **Flexible Actions**: Support for both "stop" and "terminate" actions when idle
+- **Resource Cleanup**: Automatic cleanup of CloudWatch alarms during instance deletion
+- **Rollback Support**: Alarm cleanup during failed provisioning rollback
+- **Cost Optimization**: Prevent costs from idle development/batch processing instances
+- **Comprehensive Validation**: Full validation of idle shutdown configuration parameters
+- **Example Configurations**: Multiple examples showing different idle shutdown scenarios
+
 ### ✅ Technical Implementation
 - **boto3 Integration**: Full AWS SDK integration for EC2 and EBS operations with session management
 - **Command Line Interface**: Professional CLI with argparse (includes monitor command and profile support)
@@ -44,10 +54,12 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **Error Recovery**: Automatic rollback on partial failures
 
 ### ✅ Deliverables
-1. **Python Script**: Complete implementation in `script.py` with user data support
-2. **Example YAML**: Comprehensive example specification (`example_spec.yaml`) with user data examples
+1. **Python Script**: Complete implementation in `script.py` with user data support and CloudWatch idle shutdown
+2. **Example YAML**: Comprehensive example specification (`example_spec.yaml`) with user data and idle shutdown examples
 3. **User Data Scripts**: Five example scripts in `examples/` directory
-4. **Documentation**: Detailed README with usage instructions and examples README
+4. **Idle Shutdown Examples**: Complete example configuration (`example_with_idle_shutdown.yaml`)
+5. **Documentation**: Detailed README with usage instructions, CloudWatch features, and examples README
+6. **Implementation Guide**: Dedicated CloudWatch implementation documentation
 5. **Testing**: Comprehensive unit tests including user data functionality
 6. **Requirements**: Proper dependency management
 

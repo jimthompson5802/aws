@@ -17,6 +17,11 @@ instances:
         Value: "web-app"
     user_data:  # Optional: User data script for instance customization
       script_path: "examples/python_web_server.sh"  # Path to script file
+    # Optional: CloudWatch idle shutdown configuration
+    idle_shutdown:
+      cpu_threshold: 10.0          # Stop when CPU < 10% for specified time
+      evaluation_minutes: 20       # Evaluate for 20 minutes
+      action: "stop"               # "stop" or "terminate"
     volumes:  # Optional: Additional EBS volumes
       - size: 20
         type: "gp3"
@@ -104,6 +109,11 @@ instances:
         Value: "data-science"
     user_data:  # Data science environment setup
       script_path: "examples/data_science_setup.sh"
+    # Idle shutdown for development data science instance
+    idle_shutdown:
+      cpu_threshold: 5.0           # Stop when CPU < 5%
+      evaluation_minutes: 15       # For 15 minutes
+      action: "stop"               # Stop to preserve environment
     volumes:
       - size: 500
         type: "gp3"
