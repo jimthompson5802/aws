@@ -4,6 +4,27 @@
 
 ✅ **Successfully implemented CloudWatch idle shutdown and cleanup functionality** for the AWS Compute and Storage Automation Script.
 
+🆕 **UPDATED**: Implemented refined idle shutdown criteria with startup protection to prevent premature instance termination.
+
+## Recent Updates (August 25, 2025)
+
+### Updated Idle Shutdown Criteria Implementation
+
+**Key Change**: Modified CloudWatch alarm configuration to prevent shutdown during instance startup when CloudWatch data is missing.
+
+**Files Modified**:
+- `script.py`: Changed `TreatMissingData` from `"breaching"` to `"notBreaching"`
+- `CLOUDWATCH_IDLE_SHUTDOWN_IMPLEMENTATION.md`: Updated documentation
+- `README.md`: Added startup protection details
+- `tests/test_aws_automation.py`: Updated tests to verify new behavior
+
+**Technical Details**:
+- **Before**: Missing data treated as breaching → risk of immediate shutdown
+- **After**: Missing data treated as not breaching → startup protection enabled
+- **Result**: Instances are only shutdown with sufficient monitoring data confirming idle state
+
+**PRD Compliance**: Fully satisfies requirement: "Do not shutdown the instance when the EC2 instance first starts up and is missing alert data."
+
 ## Features Implemented
 
 ### 1. ✅ CloudWatch Idle Shutdown Configuration
