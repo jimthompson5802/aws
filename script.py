@@ -46,7 +46,8 @@ class AWSResourceManager:
         
         self.ec2_client = self.session.client("ec2", region_name=region)
         self.ec2_resource = self.session.resource("ec2", region_name=region)
-        self.created_resources = {"instances": [], "volumes": []}
+        self.cloudwatch_client = self.session.client("cloudwatch", region_name=region)
+        self.created_resources = {"instances": [], "volumes": [], "alarms": []}
 
         # Setup logging
         logging.basicConfig(
@@ -124,6 +125,33 @@ class AWSResourceManager:
                 
                 if "script_path" not in user_data and "inline_script" not in user_data:
                     raise ValueError(f"user_data must contain either script_path or inline_script in instance {i}")
+
+            # Validate idle shutdown configuration
+            if "idle_shutdown" in instance:
+                idle_config = instance["idle_shutdown"]
+                if not isinstance(idle_config, dict):
+                    raise ValueError(f"idle_shutdown must be an object in instance {i}")
+                
+                required_idle_fields = ["cpu_threshold", "evaluation_minutes"]
+                for field in required_idle_fields:
+                    if field not in idle_config:
+                        raise ValueError(f"Missing required field '{field}' in idle_shutdown config for instance {i}")
+                
+                # Validate threshold is between 0 and 100
+                threshold = idle_config["cpu_threshold"]
+                if not isinstance(threshold, (int, float)) or threshold < 0 or threshold > 100:
+                    raise ValueError(f"cpu_threshold must be a number between 0 and 100 in instance {i}")
+                
+                # Validate evaluation_minutes is positive
+                eval_mins = idle_config["evaluation_minutes"]
+                if not isinstance(eval_mins, int) or eval_mins <= 0:
+                    raise ValueError(f"evaluation_minutes must be a positive integer in instance {i}")
+                
+                # Validate action if specified
+                if "action" in idle_config:
+                    valid_actions = ["stop", "terminate"]
+                    if idle_config["action"] not in valid_actions:
+                        raise ValueError(f"idle_shutdown action must be one of {valid_actions} in instance {i}")
 
         self.logger.info("Specification validation passed")
 
@@ -412,6 +440,76 @@ echo "=============================================="
 
         return created_volume_ids
 
+    def _create_idle_shutdown_alarm(self, instance_id: str, instance_spec: Dict[str, Any]) -> str:
+        """Create CloudWatch alarm for idle shutdown detection.
+
+        Args:
+            instance_id: ID of the instance to monitor
+            instance_spec: Instance specification containing idle_shutdown config
+
+        Returns:
+            CloudWatch alarm name
+
+        Raises:
+            ClientError: If alarm creation fails
+        """
+        if "idle_shutdown" not in instance_spec:
+            return None
+
+        idle_config = instance_spec["idle_shutdown"]
+        instance_name = instance_spec["name"]
+        
+        # Default values
+        cpu_threshold = idle_config["cpu_threshold"]
+        evaluation_minutes = idle_config["evaluation_minutes"]
+        action = idle_config.get("action", "stop")  # Default to stop
+        
+        alarm_name = f"idle-shutdown-{instance_name}-{instance_id}"
+        alarm_description = f"Idle shutdown alarm for {instance_name} - {action} instance when CPU < {cpu_threshold}% for {evaluation_minutes} minutes"
+        
+        try:
+            # Check if alarm already exists (for idempotency)
+            try:
+                existing_alarms = self.cloudwatch_client.describe_alarms(AlarmNames=[alarm_name])
+                if existing_alarms.get("MetricAlarms"):
+                    self.logger.info(f"CloudWatch alarm {alarm_name} already exists, skipping creation")
+                    return alarm_name
+            except ClientError:
+                # Alarm doesn't exist, proceed with creation
+                pass
+            
+            # Create the alarm
+            self.cloudwatch_client.put_metric_alarm(
+                AlarmName=alarm_name,
+                AlarmDescription=alarm_description,
+                ActionsEnabled=True,
+                AlarmActions=[
+                    f"arn:aws:automate:{self.region}:ec2:{action}"
+                ],
+                MetricName="CPUUtilization",
+                Namespace="AWS/EC2",
+                Statistic="Average",
+                Dimensions=[
+                    {
+                        "Name": "InstanceId",
+                        "Value": instance_id
+                    }
+                ],
+                Period=300,  # 5 minutes
+                EvaluationPeriods=evaluation_minutes // 5,  # Convert minutes to 5-minute periods
+                Threshold=cpu_threshold,
+                ComparisonOperator="LessThanThreshold",
+                TreatMissingData="breaching"  # Treat missing data as breaching threshold
+            )
+            
+            self.logger.info(f"Created CloudWatch alarm: {alarm_name} for instance {instance_id}")
+            self.created_resources["alarms"].append(alarm_name)
+            return alarm_name
+            
+        except ClientError as e:
+            self.logger.error(f"Failed to create CloudWatch alarm for instance {instance_id}: {e}")
+            raise
+
     def provision_resources(self, spec: Dict[str, Any]) -> Dict[str, List]:
         """Provision all resources according to specification.
 
@@ -434,7 +532,7 @@ echo "=============================================="
             )
             return existing
 
-        provisioned = {"instances": [], "volumes": []}
+        provisioned = {"instances": [], "volumes": [], "alarms": []}
 
         try:
             for instance_spec in spec["instances"]:
@@ -445,6 +543,11 @@ echo "=============================================="
                 # Create and attach volumes
                 volume_ids = self._create_and_attach_volumes(instance_id, instance_spec)
                 provisioned["volumes"].extend(volume_ids)
+
+                # Create CloudWatch idle shutdown alarm if configured
+                alarm_name = self._create_idle_shutdown_alarm(instance_id, instance_spec)
+                if alarm_name:
+                    provisioned["alarms"].append(alarm_name)
 
             self.logger.info("Resource provisioning completed successfully")
             return provisioned
@@ -458,6 +561,15 @@ echo "=============================================="
     def rollback_resources(self) -> None:
         """Roll back all created resources in case of failure."""
         self.logger.info("Rolling back created resources...")
+
+        # Delete CloudWatch alarms
+        for alarm_name in self.created_resources["alarms"]:
+            try:
+                self.cloudwatch_client.delete_alarms(AlarmNames=[alarm_name])
+                self.logger.info(f"Deleted CloudWatch alarm: {alarm_name}")
+            except ClientError as e:
+                # Don't fail rollback if alarm deletion fails
+                self.logger.warning(f"Failed to delete CloudWatch alarm {alarm_name}: {e}")
 
         # Detach and delete volumes
         for volume_id in self.created_resources["volumes"]:
@@ -508,6 +620,7 @@ echo "=============================================="
 
         instances_to_delete = []
         volumes_to_delete = []
+        alarms_to_delete = []
 
         # Find instances to delete
         for instance_spec in spec["instances"]:
@@ -525,15 +638,43 @@ echo "=============================================="
 
                 for reservation in response["Reservations"]:
                     for instance in reservation["Instances"]:
-                        instances_to_delete.append(instance["InstanceId"])
+                        instance_id = instance["InstanceId"]
+                        instances_to_delete.append(instance_id)
 
                         # Find attached volumes
                         for bdm in instance.get("BlockDeviceMappings", []):
                             if "Ebs" in bdm:
                                 volumes_to_delete.append(bdm["Ebs"]["VolumeId"])
 
+                        # Find associated CloudWatch alarms for idle shutdown
+                        alarm_name = f"idle-shutdown-{instance_name}-{instance_id}"
+                        alarms_to_delete.append(alarm_name)
+
             except ClientError as e:
                 self.logger.error(f"Error finding instances to delete: {e}")
+
+        # Delete CloudWatch alarms first
+        if alarms_to_delete:
+            try:
+                # Check which alarms actually exist before trying to delete them
+                existing_alarms = []
+                try:
+                    response = self.cloudwatch_client.describe_alarms(AlarmNames=alarms_to_delete)
+                    existing_alarms = [alarm["AlarmName"] for alarm in response["MetricAlarms"]]
+                except ClientError as e:
+                    # If describe_alarms fails, we'll try to delete anyway and handle errors individually
+                    self.logger.warning(f"Could not describe alarms: {e}")
+                    existing_alarms = alarms_to_delete
+
+                if existing_alarms:
+                    self.cloudwatch_client.delete_alarms(AlarmNames=existing_alarms)
+                    self.logger.info(f"Deleted CloudWatch alarms: {existing_alarms}")
+                else:
+                    self.logger.info("No CloudWatch alarms found to delete")
+                    
+            except ClientError as e:
+                # Don't fail the entire operation if alarm deletion fails
+                self.logger.warning(f"Failed to delete some CloudWatch alarms: {e}")
 
         # Terminate instances
         if instances_to_delete:
@@ -642,6 +783,74 @@ echo "=============================================="
         
         return logs
 
+    def get_cloudwatch_alarms(self, spec: Dict[str, Any]) -> Dict[str, str]:
+        """Get CloudWatch alarms for instances in the specification.
+
+        Args:
+            spec: Resource specification
+
+        Returns:
+            Dictionary mapping instance names to alarm states
+        """
+        alarm_states = {}
+        
+        for instance_spec in spec["instances"]:
+            instance_name = instance_spec["name"]
+            
+            # Skip instances without idle shutdown configuration
+            if "idle_shutdown" not in instance_spec:
+                alarm_states[instance_name] = "No idle shutdown configured"
+                continue
+            
+            try:
+                # Find the instance
+                response = self.ec2_client.describe_instances(
+                    Filters=[
+                        {"Name": "tag:Name", "Values": [instance_name]},
+                        {
+                            "Name": "instance-state-name",
+                            "Values": ["running", "pending", "stopped", "stopping"],
+                        },
+                    ]
+                )
+
+                instance_found = False
+                for reservation in response["Reservations"]:
+                    for instance in reservation["Instances"]:
+                        instance_id = instance["InstanceId"]
+                        alarm_name = f"idle-shutdown-{instance_name}-{instance_id}"
+                        
+                        # Check alarm state
+                        try:
+                            alarm_response = self.cloudwatch_client.describe_alarms(
+                                AlarmNames=[alarm_name]
+                            )
+                            
+                            if alarm_response.get("MetricAlarms"):
+                                alarm = alarm_response["MetricAlarms"][0]
+                                state = alarm.get("StateValue", "UNKNOWN")
+                                reason = alarm.get("StateReason", "")
+                                alarm_states[instance_name] = f"Alarm: {state} - {reason}"
+                            else:
+                                alarm_states[instance_name] = "Alarm not found"
+                                
+                        except ClientError as e:
+                            alarm_states[instance_name] = f"Error checking alarm: {e}"
+                        
+                        instance_found = True
+                        break
+                    
+                    if instance_found:
+                        break
+                
+                if not instance_found:
+                    alarm_states[instance_name] = "Instance not found"
+                    
+            except ClientError as e:
+                alarm_states[instance_name] = f"Error finding instance: {e}"
+        
+        return alarm_states
+
 
 def main():
     """Main function to handle command line arguments and execute the script."""
@@ -650,8 +859,8 @@ def main():
     )
     parser.add_argument(
         "action", 
-        choices=["create", "delete", "monitor"], 
-        help="Action to perform: create resources, delete resources, or monitor user data execution"
+        choices=["create", "delete", "monitor", "monitor-alarms"], 
+        help="Action to perform: create resources, delete resources, monitor user data execution, or monitor CloudWatch alarms"
     )
     parser.add_argument(
         "--spec", "-s", required=True, help="Path to YAML specification file"
@@ -681,7 +890,7 @@ def main():
         manager = AWSResourceManager(region=args.region, profile=profile_to_use)
         spec = manager.load_specification(args.spec)
 
-        if args.dry_run and args.action != "monitor":
+        if args.dry_run and args.action not in ["monitor", "monitor-alarms"]:
             print(f"DRY RUN: Would {args.action} resources according to specification:")
             if profile_to_use:
                 print(f"Using AWS profile: {profile_to_use}")
@@ -696,6 +905,8 @@ def main():
             
             # Check if any instances have user data and offer to monitor
             has_user_data = any("user_data" in inst for inst in spec["instances"])
+            has_idle_shutdown = any("idle_shutdown" in inst for inst in spec["instances"])
+            
             if has_user_data:
                 print("\nInstances with user data scripts detected.")
                 print("You can monitor user data execution with:")
@@ -703,6 +914,14 @@ def main():
                 if profile_to_use:
                     monitor_cmd += f" --profile {profile_to_use}"
                 print(monitor_cmd)
+            
+            if has_idle_shutdown:
+                print("\nInstances with idle shutdown alarms detected.")
+                print("You can monitor CloudWatch alarms with:")
+                monitor_alarm_cmd = f"python script.py monitor-alarms --spec {args.spec} --region {args.region}"
+                if profile_to_use:
+                    monitor_alarm_cmd += f" --profile {profile_to_use}"
+                print(monitor_alarm_cmd)
                 
         elif args.action == "delete":
             manager.delete_resources(spec)
@@ -716,6 +935,15 @@ def main():
                 print(f"\nInstance: {instance_name}")
                 print("-" * 30)
                 print(log_content)
+                print("-" * 30)
+                
+        elif args.action == "monitor-alarms":
+            alarm_states = manager.get_cloudwatch_alarms(spec)
+            print("\nCloudWatch Idle Shutdown Alarms:")
+            print("=" * 50)
+            for instance_name, alarm_status in alarm_states.items():
+                print(f"Instance: {instance_name}")
+                print(f"Status: {alarm_status}")
                 print("-" * 30)
 
     except Exception as e:
