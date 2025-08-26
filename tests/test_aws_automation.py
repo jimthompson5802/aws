@@ -525,5 +525,185 @@ class TestUserDataPrepation:
         aws_manager.cloudwatch_client.put_metric_alarm.assert_not_called()
 
 
+class TestConnectionInformation:
+    """Test cases for connection information functionality."""
+
+    @pytest.fixture
+    def aws_manager(self):
+        """Create an AWSResourceManager instance with mocked AWS clients."""
+        with patch("boto3.Session") as mock_session:
+            mock_session.return_value.client.return_value = MagicMock()
+            mock_session.return_value.resource.return_value = MagicMock()
+            manager = AWSResourceManager(region="us-east-1")
+            return manager
+
+    def test_get_instance_connection_info(self, aws_manager):
+        """Test getting connection information for instances."""
+        # Mock the describe_instances response
+        mock_response = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-12345678",
+                            "PublicIpAddress": "54.123.45.67",
+                            "State": {"Name": "running"},
+                            "Tags": [
+                                {"Key": "Name", "Value": "test-instance-1"},
+                                {"Key": "Environment", "Value": "test"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-87654321",
+                            "State": {"Name": "running"},
+                            "Tags": [
+                                {"Key": "Name", "Value": "test-instance-2"}
+                            ]
+                            # No PublicIpAddress key - should default to "No public IP"
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        aws_manager.ec2_client.describe_instances.return_value = mock_response
+        
+        instance_ids = ["i-12345678", "i-87654321"]
+        result = aws_manager.get_instance_connection_info(instance_ids)
+        
+        assert len(result) == 2
+        
+        # Check first instance
+        assert result[0]["instance_id"] == "i-12345678"
+        assert result[0]["name"] == "test-instance-1"
+        assert result[0]["public_ip"] == "54.123.45.67"
+        assert result[0]["state"] == "running"
+        
+        # Check second instance (no public IP)
+        assert result[1]["instance_id"] == "i-87654321"
+        assert result[1]["name"] == "test-instance-2"
+        assert result[1]["public_ip"] == "No public IP"
+        assert result[1]["state"] == "running"
+        
+        aws_manager.ec2_client.describe_instances.assert_called_once_with(InstanceIds=instance_ids)
+
+    def test_get_instance_connection_info_empty_list(self, aws_manager):
+        """Test getting connection information with empty instance list."""
+        result = aws_manager.get_instance_connection_info([])
+        
+        assert result == []
+        aws_manager.ec2_client.describe_instances.assert_not_called()
+
+    def test_get_connection_info_by_spec(self, aws_manager):
+        """Test getting connection information by specification."""
+        spec = {
+            "instances": [
+                {"name": "web-server"},
+                {"name": "app-server"}
+            ]
+        }
+        
+        # Mock responses for each instance lookup
+        def mock_describe_instances(**kwargs):
+            filters = kwargs.get("Filters", [])
+            name_filter = next((f for f in filters if f["Name"] == "tag:Name"), None)
+            if name_filter:
+                instance_name = name_filter["Values"][0]
+                if instance_name == "web-server":
+                    return {
+                        "Reservations": [
+                            {
+                                "Instances": [
+                                    {
+                                        "InstanceId": "i-web123",
+                                        "PublicIpAddress": "1.2.3.4",
+                                        "State": {"Name": "running"}
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                elif instance_name == "app-server":
+                    return {
+                        "Reservations": [
+                            {
+                                "Instances": [
+                                    {
+                                        "InstanceId": "i-app456",
+                                        "State": {"Name": "stopped"}
+                                        # No PublicIpAddress
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+            return {"Reservations": []}
+        
+        aws_manager.ec2_client.describe_instances.side_effect = mock_describe_instances
+        
+        result = aws_manager.get_connection_info_by_spec(spec)
+        
+        assert len(result) == 2
+        assert result[0]["name"] == "web-server"
+        assert result[0]["instance_id"] == "i-web123"
+        assert result[0]["public_ip"] == "1.2.3.4"
+        assert result[0]["state"] == "running"
+        
+        assert result[1]["name"] == "app-server"
+        assert result[1]["instance_id"] == "i-app456"
+        assert result[1]["public_ip"] == "No public IP"
+        assert result[1]["state"] == "stopped"
+
+    def test_provision_resources_includes_connection_info(self, aws_manager):
+        """Test that provision_resources returns connection information."""
+        spec = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678"
+                }
+            ]
+        }
+        
+        # Mock _get_existing_resources to return no existing resources
+        aws_manager._get_existing_resources = MagicMock(return_value={
+            "instances": [],
+            "volumes": [],
+            "alarms": []
+        })
+        
+        # Mock _create_ec2_instance
+        aws_manager._create_ec2_instance = MagicMock(return_value="i-123456789")
+        
+        # Mock _create_and_attach_volumes
+        aws_manager._create_and_attach_volumes = MagicMock(return_value=[])
+        
+        # Mock _create_idle_shutdown_alarm
+        aws_manager._create_idle_shutdown_alarm = MagicMock(return_value=None)
+        
+        # Mock get_instance_connection_info
+        mock_connection_info = [
+            {
+                "instance_id": "i-123456789",
+                "name": "test-instance",
+                "public_ip": "1.2.3.4",
+                "state": "running"
+            }
+        ]
+        aws_manager.get_instance_connection_info = MagicMock(return_value=mock_connection_info)
+        
+        result = aws_manager.provision_resources(spec)
+        
+        assert "connection_info" in result
+        assert result["connection_info"] == mock_connection_info
+        assert len(result["instances"]) == 1
+        assert result["instances"][0] == "i-123456789"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

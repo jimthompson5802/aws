@@ -11,6 +11,7 @@ This project automates the provisioning of AWS EC2 instances and associated stor
 - **User Data Script Support**: Automate instance customization with bash scripts
 - **CloudWatch Idle Shutdown**: Automatically stop/terminate idle instances to save costs
 - **Script Monitoring**: Monitor user data script execution and retrieve logs
+- **Connection Information**: Display instance names, IDs, public IP addresses, and SSH commands
 - **Example Scripts**: Pre-built scripts for common scenarios (web servers, databases, etc.)
 - **Comprehensive Logging**: Detailed logs for debugging and auditing
 
@@ -49,6 +50,11 @@ python script.py monitor --spec example.yaml --region us-east-1
 python script.py monitor-alarms --spec example.yaml --region us-east-1
 ```
 
+### Get Connection Information
+```bash
+python script.py connection-info --spec example.yaml --region us-east-1
+```
+
 ### Using AWS Profiles
 ```bash
 # Use a specific AWS profile
@@ -60,6 +66,38 @@ python script.py create --spec example.yaml --profile my-profile
 ### Dry Run
 ```bash
 python script.py create --spec example.yaml --dry-run
+```
+
+## Connection Information
+
+After creating instances, the script automatically displays connection information including:
+- Instance name and ID
+- Public IP address (if available)
+- Instance state
+- SSH command template for easy connection
+
+You can also retrieve connection information for existing instances:
+
+```bash
+python script.py connection-info --spec example.yaml --region us-east-1
+```
+
+### Example Output
+```
+============================================================
+INSTANCE CONNECTION INFORMATION
+============================================================
+Instance Name: web-server-1
+Instance ID: i-1234567890abcdef0
+Public IP Address: 54.123.45.67
+State: running
+SSH Command: ssh -i <your-key.pem> ec2-user@54.123.45.67
+------------------------------------------------------------
+Instance Name: app-server-1
+Instance ID: i-0987654321fedcba0
+Public IP Address: No public IP
+State: running
+------------------------------------------------------------
 ```
 
 ## Configuration
