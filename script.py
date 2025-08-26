@@ -510,14 +510,14 @@ echo "=============================================="
             self.logger.error(f"Failed to create CloudWatch alarm for instance {instance_id}: {e}")
             raise
 
-    def provision_resources(self, spec: Dict[str, Any]) -> Dict[str, List]:
+    def provision_resources(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         """Provision all resources according to specification.
 
         Args:
             spec: Resource specification
 
         Returns:
-            Dictionary of created resource IDs
+            Dictionary of created resource IDs and connection information
 
         Raises:
             Exception: If provisioning fails
@@ -530,7 +530,14 @@ echo "=============================================="
             self.logger.warning(
                 "Found existing instances. Skipping creation to maintain idempotency."
             )
-            return existing
+            # Get connection info for existing instances
+            connection_info = self.get_instance_connection_info(existing["instances"])
+            return {
+                "instances": existing["instances"],
+                "volumes": existing["volumes"], 
+                "alarms": existing["alarms"],
+                "connection_info": connection_info
+            }
 
         provisioned = {"instances": [], "volumes": [], "alarms": []}
 
@@ -548,6 +555,10 @@ echo "=============================================="
                 alarm_name = self._create_idle_shutdown_alarm(instance_id, instance_spec)
                 if alarm_name:
                     provisioned["alarms"].append(alarm_name)
+
+            # Get connection information for all provisioned instances
+            connection_info = self.get_instance_connection_info(provisioned["instances"])
+            provisioned["connection_info"] = connection_info
 
             self.logger.info("Resource provisioning completed successfully")
             return provisioned
@@ -851,6 +862,105 @@ echo "=============================================="
         
         return alarm_states
 
+    def get_instance_connection_info(self, instance_ids: List[str]) -> List[Dict[str, str]]:
+        """Get connection information for instances.
+
+        Args:
+            instance_ids: List of instance IDs to get connection info for
+
+        Returns:
+            List of dictionaries containing name and public IP for each instance
+
+        Raises:
+            ClientError: If unable to retrieve instance information
+        """
+        connection_info = []
+        
+        if not instance_ids:
+            return connection_info
+            
+        try:
+            response = self.ec2_client.describe_instances(InstanceIds=instance_ids)
+            
+            for reservation in response["Reservations"]:
+                for instance in reservation["Instances"]:
+                    instance_id = instance["InstanceId"]
+                    instance_name = "Unknown"
+                    public_ip = instance.get("PublicIpAddress", "No public IP")
+                    
+                    # Get instance name from tags
+                    for tag in instance.get("Tags", []):
+                        if tag["Key"] == "Name":
+                            instance_name = tag["Value"]
+                            break
+                    
+                    connection_info.append({
+                        "instance_id": instance_id,
+                        "name": instance_name,
+                        "public_ip": public_ip,
+                        "state": instance["State"]["Name"]
+                    })
+                    
+            self.logger.info(f"Retrieved connection information for {len(connection_info)} instances")
+            return connection_info
+            
+        except ClientError as e:
+            self.logger.error(f"Failed to retrieve instance connection information: {e}")
+            raise
+
+    def get_connection_info_by_spec(self, spec: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Get connection information for instances specified in the YAML spec.
+
+        Args:
+            spec: Resource specification
+
+        Returns:
+            List of dictionaries containing connection information for each instance
+
+        Raises:
+            ClientError: If unable to retrieve instance information
+        """
+        all_connection_info = []
+        
+        for instance_spec in spec["instances"]:
+            instance_name = instance_spec["name"]
+            
+            try:
+                # Find instances by name tag
+                response = self.ec2_client.describe_instances(
+                    Filters=[
+                        {"Name": "tag:Name", "Values": [instance_name]},
+                        {
+                            "Name": "instance-state-name",
+                            "Values": ["running", "pending", "stopped", "stopping"],
+                        },
+                    ]
+                )
+                
+                for reservation in response["Reservations"]:
+                    for instance in reservation["Instances"]:
+                        instance_id = instance["InstanceId"]
+                        public_ip = instance.get("PublicIpAddress", "No public IP")
+                        
+                        all_connection_info.append({
+                            "instance_id": instance_id,
+                            "name": instance_name,
+                            "public_ip": public_ip,
+                            "state": instance["State"]["Name"]
+                        })
+                        
+            except ClientError as e:
+                self.logger.error(f"Failed to find instance {instance_name}: {e}")
+                # Add entry indicating instance not found
+                all_connection_info.append({
+                    "instance_id": "N/A",
+                    "name": instance_name,
+                    "public_ip": "Instance not found",
+                    "state": "unknown"
+                })
+        
+        return all_connection_info
+
 
 def main():
     """Main function to handle command line arguments and execute the script."""
@@ -859,8 +969,8 @@ def main():
     )
     parser.add_argument(
         "action", 
-        choices=["create", "delete", "monitor", "monitor-alarms"], 
-        help="Action to perform: create resources, delete resources, monitor user data execution, or monitor CloudWatch alarms"
+        choices=["create", "delete", "monitor", "monitor-alarms", "connection-info"], 
+        help="Action to perform: create resources, delete resources, monitor user data execution, monitor CloudWatch alarms, or get connection info"
     )
     parser.add_argument(
         "--spec", "-s", required=True, help="Path to YAML specification file"
@@ -890,7 +1000,7 @@ def main():
         manager = AWSResourceManager(region=args.region, profile=profile_to_use)
         spec = manager.load_specification(args.spec)
 
-        if args.dry_run and args.action not in ["monitor", "monitor-alarms"]:
+        if args.dry_run and args.action not in ["monitor", "monitor-alarms", "connection-info"]:
             print(f"DRY RUN: Would {args.action} resources according to specification:")
             if profile_to_use:
                 print(f"Using AWS profile: {profile_to_use}")
@@ -902,6 +1012,21 @@ def main():
         if args.action == "create":
             resources = manager.provision_resources(spec)
             print(f"Successfully created resources: {resources}")
+            
+            # Display connection information
+            connection_info = resources.get("connection_info", [])
+            if connection_info:
+                print("\n" + "=" * 60)
+                print("INSTANCE CONNECTION INFORMATION")
+                print("=" * 60)
+                for info in connection_info:
+                    print(f"Instance Name: {info['name']}")
+                    print(f"Instance ID: {info['instance_id']}")
+                    print(f"Public IP Address: {info['public_ip']}")
+                    print(f"State: {info['state']}")
+                    if info['public_ip'] != "No public IP":
+                        print(f"SSH Command: ssh -i <your-key.pem> ec2-user@{info['public_ip']}")
+                    print("-" * 60)
             
             # Check if any instances have user data and offer to monitor
             has_user_data = any("user_data" in inst for inst in spec["instances"])
@@ -945,6 +1070,24 @@ def main():
                 print(f"Instance: {instance_name}")
                 print(f"Status: {alarm_status}")
                 print("-" * 30)
+                
+        elif args.action == "connection-info":
+            connection_info = manager.get_connection_info_by_spec(spec)
+            print("\n" + "=" * 60)
+            print("INSTANCE CONNECTION INFORMATION")
+            print("=" * 60)
+            if connection_info:
+                for info in connection_info:
+                    print(f"Instance Name: {info['name']}")
+                    print(f"Instance ID: {info['instance_id']}")
+                    print(f"Public IP Address: {info['public_ip']}")
+                    print(f"State: {info['state']}")
+                    if info['public_ip'] != "No public IP" and info['public_ip'] != "Instance not found":
+                        print(f"SSH Command: ssh -i <your-key.pem> ec2-user@{info['public_ip']}")
+                    print("-" * 60)
+            else:
+                print("No instances found matching the specification.")
+                print("-" * 60)
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

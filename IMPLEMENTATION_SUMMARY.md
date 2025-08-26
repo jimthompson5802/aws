@@ -44,6 +44,14 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **Comprehensive Validation**: Full validation of idle shutdown configuration parameters
 - **Example Configurations**: Multiple examples showing different idle shutdown scenarios
 
+### ✅ Connection Information Output (NEW)
+- **Automatic Display**: Connection information automatically displayed after resource provisioning
+- **Formatted Output**: Well-formatted display of instance names, IDs, public IPs, and states
+- **SSH Command Generation**: Automatic generation of SSH command templates for easy connection
+- **Standalone Command**: `connection-info` action to retrieve connection info for existing instances
+- **Comprehensive Error Handling**: Graceful handling of instances without public IPs or missing instances
+- **Enhanced User Experience**: Clear, actionable information for connecting to instances
+
 ### ✅ Technical Implementation
 - **boto3 Integration**: Full AWS SDK integration for EC2 and EBS operations with session management
 - **Command Line Interface**: Professional CLI with argparse (includes monitor command and profile support)

@@ -25,6 +25,7 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
    - Tag resources appropriately.
    - **Execute user data script on instance startup** (if specified).
    - **Configure CloudWatch Alarm for Idle Shutdown**: If specified in the YAML, create a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., CPU utilization below a threshold) for a specified duration.
+   - **Output Connection Information**: Print the name and public IP address of the instance(s) after provisioning. ✅ IMPLEMENTED
 
 3. **Instance Customization** ✅ IMPLEMENTED
    - Support for specifying a bash script that runs on EC2 instance startup via user data.
@@ -83,7 +84,8 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
   - `dev_environment.sh` - Complete development environment with VS Code server
 - **User data monitoring functionality** - Monitor script execution status
 - **Enhanced YAML specification** with user data examples
-- **CloudWatch idle shutdown alarm support**: Example YAML and documentation for configuring idle shutdown alarms.
+- **CloudWatch idle shutdown alarm support**: Example YAML and documentation for configuring idle shutdown alarms
+- **Connection information output functionality**: Enhanced output display of instance names, IDs, public IP addresses, and SSH commands ✅
 
 ## Open Questions
 - None (all clarified).
