@@ -77,6 +77,54 @@ class TestAWSResourceManager:
         with pytest.raises(ValueError, match="Missing required field"):
             aws_manager._validate_specification(invalid_spec)
 
+    def test_specification_validation_invalid_iam_role(self, aws_manager):
+        """Test that invalid IAM role configurations fail validation."""
+        # Test empty string IAM role
+        invalid_spec_empty = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "iam_role": "",
+                }
+            ]
+        }
+
+        with pytest.raises(ValueError, match="iam_role must be a non-empty string"):
+            aws_manager._validate_specification(invalid_spec_empty)
+
+        # Test non-string IAM role
+        invalid_spec_non_string = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "iam_role": 123,
+                }
+            ]
+        }
+
+        with pytest.raises(ValueError, match="iam_role must be a non-empty string"):
+            aws_manager._validate_specification(invalid_spec_non_string)
+
+    def test_specification_validation_valid_iam_role(self, aws_manager):
+        """Test that valid IAM role configurations pass validation."""
+        valid_spec = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "iam_role": "my-instance-role",
+                }
+            ]
+        }
+
+        # Should not raise any exception
+        aws_manager._validate_specification(valid_spec)
+
     def test_load_specification_file_not_found(self, aws_manager):
         """Test that loading non-existent specification file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
@@ -129,7 +177,7 @@ class TestAWSResourceManager:
                     "instance_type": "t3.micro",
                     "ami_id": "ami-12345678",
                 }
-            ]
+            ],
         }
         # Should not raise any exception
         aws_manager._validate_specification(spec_with_profile)
@@ -144,9 +192,9 @@ class TestAWSResourceManager:
                     "instance_type": "t3.micro",
                     "ami_id": "ami-12345678",
                 }
-            ]
+            ],
         }
-        
+
         with pytest.raises(ValueError, match="Profile field must be a string"):
             aws_manager._validate_specification(spec_with_invalid_profile)
 
@@ -156,10 +204,10 @@ class TestAWSResourceManager:
         # Test with profile
         AWSResourceManager(region="us-west-2", profile="test-profile")
         mock_session.assert_called_with(profile_name="test-profile")
-        
+
         # Reset mock
         mock_session.reset_mock()
-        
+
         # Test without profile
         AWSResourceManager(region="us-west-2", profile=None)
         mock_session.assert_called_with()
@@ -238,9 +286,7 @@ class TestSpecificationValidation:
                     "name": "user-data-test",
                     "instance_type": "t3.micro",
                     "ami_id": "ami-12345678",
-                    "user_data": {
-                        "script_path": "examples/python_web_server.sh"
-                    }
+                    "user_data": {"script_path": "examples/python_web_server.sh"},
                 }
             ]
         }
@@ -257,9 +303,7 @@ class TestSpecificationValidation:
                     "name": "user-data-inline-test",
                     "instance_type": "t3.micro",
                     "ami_id": "ami-12345678",
-                    "user_data": {
-                        "inline_script": "#!/bin/bash\nyum update -y\n"
-                    }
+                    "user_data": {"inline_script": "#!/bin/bash\nyum update -y\n"},
                 }
             ]
         }
@@ -278,15 +322,17 @@ class TestSpecificationValidation:
                     "ami_id": "ami-12345678",
                     "user_data": {
                         "script_path": "script.sh",
-                        "inline_script": "#!/bin/bash\necho 'test'"
-                    }
+                        "inline_script": "#!/bin/bash\necho 'test'",
+                    },
                 }
             ]
         }
 
         with patch("boto3.client"), patch("boto3.resource"):
             manager = AWSResourceManager()
-            with pytest.raises(ValueError, match="Cannot specify both script_path and inline_script"):
+            with pytest.raises(
+                ValueError, match="Cannot specify both script_path and inline_script"
+            ):
                 manager._validate_specification(spec)
 
     def test_user_data_empty_fails(self):
@@ -297,14 +343,17 @@ class TestSpecificationValidation:
                     "name": "user-data-empty-test",
                     "instance_type": "t3.micro",
                     "ami_id": "ami-12345678",
-                    "user_data": {}
+                    "user_data": {},
                 }
             ]
         }
 
         with patch("boto3.client"), patch("boto3.resource"):
             manager = AWSResourceManager()
-            with pytest.raises(ValueError, match="user_data must contain either script_path or inline_script"):
+            with pytest.raises(
+                ValueError,
+                match="user_data must contain either script_path or inline_script",
+            ):
                 manager._validate_specification(spec)
 
     def test_user_data_invalid_type_fails(self):
@@ -315,7 +364,7 @@ class TestSpecificationValidation:
                     "name": "user-data-type-test",
                     "instance_type": "t3.micro",
                     "ami_id": "ami-12345678",
-                    "user_data": "this should be an object, not a string"
+                    "user_data": "this should be an object, not a string",
                 }
             ]
         }
@@ -323,6 +372,59 @@ class TestSpecificationValidation:
         with patch("boto3.client"), patch("boto3.resource"):
             manager = AWSResourceManager()
             with pytest.raises(ValueError, match="user_data must be an object"):
+                manager._validate_specification(spec)
+
+    def test_iam_role_configuration(self):
+        """Test that IAM role configuration is properly validated."""
+        spec = {
+            "instances": [
+                {
+                    "name": "iam-role-test",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "iam_role": "my-instance-role",
+                }
+            ]
+        }
+
+        with patch("boto3.client"), patch("boto3.resource"):
+            manager = AWSResourceManager()
+            manager._validate_specification(spec)  # Should not raise
+
+    def test_iam_role_empty_string_fails(self):
+        """Test that empty IAM role string fails validation."""
+        spec = {
+            "instances": [
+                {
+                    "name": "iam-role-empty-test",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "iam_role": "",
+                }
+            ]
+        }
+
+        with patch("boto3.client"), patch("boto3.resource"):
+            manager = AWSResourceManager()
+            with pytest.raises(ValueError, match="iam_role must be a non-empty string"):
+                manager._validate_specification(spec)
+
+    def test_iam_role_non_string_fails(self):
+        """Test that non-string IAM role fails validation."""
+        spec = {
+            "instances": [
+                {
+                    "name": "iam-role-non-string-test",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "iam_role": 123,
+                }
+            ]
+        }
+
+        with patch("boto3.client"), patch("boto3.resource"):
+            manager = AWSResourceManager()
+            with pytest.raises(ValueError, match="iam_role must be a non-empty string"):
                 manager._validate_specification(spec)
 
 
@@ -341,9 +443,9 @@ class TestUserDataPrepation:
         instance_spec = {
             "name": "test-instance",
             "instance_type": "t3.micro",
-            "ami_id": "ami-12345678"
+            "ami_id": "ami-12345678",
         }
-        
+
         result = aws_manager._prepare_user_data(instance_spec)
         assert result == ""
 
@@ -352,19 +454,17 @@ class TestUserDataPrepation:
         """Test user data preparation from script file."""
         instance_spec = {
             "name": "test-instance",
-            "instance_type": "t3.micro", 
+            "instance_type": "t3.micro",
             "ami_id": "ami-12345678",
-            "user_data": {
-                "script_path": "test_script.sh"
-            }
+            "user_data": {"script_path": "test_script.sh"},
         }
-        
+
         mock_file = MagicMock()
         mock_file.read.return_value = "#!/bin/bash\necho 'test script'"
         mock_open.return_value.__enter__.return_value = mock_file
-        
+
         result = aws_manager._prepare_user_data(instance_spec)
-        
+
         assert "#!/bin/bash" in result
         assert "test script" in result
         assert "User Data Script Execution Started" in result
@@ -377,13 +477,11 @@ class TestUserDataPrepation:
             "name": "test-instance",
             "instance_type": "t3.micro",
             "ami_id": "ami-12345678",
-            "user_data": {
-                "inline_script": "#!/bin/bash\necho 'inline test'"
-            }
+            "user_data": {"inline_script": "#!/bin/bash\necho 'inline test'"},
         }
-        
+
         result = aws_manager._prepare_user_data(instance_spec)
-        
+
         assert "#!/bin/bash" in result
         assert "inline test" in result
         assert "User Data Script Execution Started" in result
@@ -401,15 +499,15 @@ class TestUserDataPrepation:
                     "idle_shutdown": {
                         "cpu_threshold": 10.0,
                         "evaluation_minutes": 15,
-                        "action": "stop"
-                    }
+                        "action": "stop",
+                    },
                 }
             ]
         }
-        
+
         # Should not raise an exception
         aws_manager._validate_specification(valid_spec)
-        
+
         # Invalid threshold (out of range)
         invalid_spec = {
             "instances": [
@@ -419,15 +517,17 @@ class TestUserDataPrepation:
                     "ami_id": "ami-12345678",
                     "idle_shutdown": {
                         "cpu_threshold": 150.0,  # Invalid: > 100
-                        "evaluation_minutes": 15
-                    }
+                        "evaluation_minutes": 15,
+                    },
                 }
             ]
         }
-        
-        with pytest.raises(ValueError, match="cpu_threshold must be a number between 0 and 100"):
+
+        with pytest.raises(
+            ValueError, match="cpu_threshold must be a number between 0 and 100"
+        ):
             aws_manager._validate_specification(invalid_spec)
-        
+
         # Invalid evaluation_minutes (negative)
         invalid_spec2 = {
             "instances": [
@@ -437,13 +537,15 @@ class TestUserDataPrepation:
                     "ami_id": "ami-12345678",
                     "idle_shutdown": {
                         "cpu_threshold": 10.0,
-                        "evaluation_minutes": -5  # Invalid: negative
-                    }
+                        "evaluation_minutes": -5,  # Invalid: negative
+                    },
                 }
             ]
         }
-        
-        with pytest.raises(ValueError, match="evaluation_minutes must be a positive integer"):
+
+        with pytest.raises(
+            ValueError, match="evaluation_minutes must be a positive integer"
+        ):
             aws_manager._validate_specification(invalid_spec2)
 
     def test_create_idle_shutdown_alarm(self, aws_manager):
@@ -453,26 +555,28 @@ class TestUserDataPrepation:
             "idle_shutdown": {
                 "cpu_threshold": 10.0,
                 "evaluation_minutes": 15,
-                "action": "stop"
-            }
+                "action": "stop",
+            },
         }
-        
+
         instance_id = "i-1234567890abcdef0"
         expected_alarm_name = f"idle-shutdown-{instance_spec['name']}-{instance_id}"
-        
+
         # Mock CloudWatch client methods
         aws_manager.cloudwatch_client.put_metric_alarm = MagicMock()
-        aws_manager.cloudwatch_client.describe_alarms = MagicMock(return_value={"MetricAlarms": []})
-        
+        aws_manager.cloudwatch_client.describe_alarms = MagicMock(
+            return_value={"MetricAlarms": []}
+        )
+
         result = aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
-        
+
         assert result == expected_alarm_name
         assert expected_alarm_name in aws_manager.created_resources["alarms"]
-        
+
         # Verify the CloudWatch API call
         aws_manager.cloudwatch_client.put_metric_alarm.assert_called_once()
         call_args = aws_manager.cloudwatch_client.put_metric_alarm.call_args[1]
-        
+
         assert call_args["AlarmName"] == expected_alarm_name
         assert call_args["MetricName"] == "CPUUtilization"
         assert call_args["Threshold"] == 10.0
@@ -488,18 +592,20 @@ class TestUserDataPrepation:
             "idle_shutdown": {
                 "cpu_threshold": 5.0,
                 "evaluation_minutes": 10,
-                "action": "terminate"
-            }
+                "action": "terminate",
+            },
         }
-        
+
         instance_id = "i-1234567890abcdef0"
-        
+
         # Mock CloudWatch client methods
         aws_manager.cloudwatch_client.put_metric_alarm = MagicMock()
-        aws_manager.cloudwatch_client.describe_alarms = MagicMock(return_value={"MetricAlarms": []})
-        
+        aws_manager.cloudwatch_client.describe_alarms = MagicMock(
+            return_value={"MetricAlarms": []}
+        )
+
         aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
-        
+
         # Verify the action is terminate
         call_args = aws_manager.cloudwatch_client.put_metric_alarm.call_args[1]
         assert call_args["TreatMissingData"] == "notBreaching"  # Startup protection
@@ -510,16 +616,16 @@ class TestUserDataPrepation:
         instance_spec = {
             "name": "test-instance",
             "instance_type": "t3.micro",
-            "ami_id": "ami-12345678"
+            "ami_id": "ami-12345678",
         }
-        
+
         instance_id = "i-1234567890abcdef0"
-        
+
         # Mock CloudWatch client methods
         aws_manager.cloudwatch_client.put_metric_alarm = MagicMock()
-        
+
         result = aws_manager._create_idle_shutdown_alarm(instance_id, instance_spec)
-        
+
         assert result is None
         assert len(aws_manager.created_resources["alarms"]) == 0
         aws_manager.cloudwatch_client.put_metric_alarm.assert_not_called()
@@ -550,8 +656,8 @@ class TestConnectionInformation:
                             "State": {"Name": "running"},
                             "Tags": [
                                 {"Key": "Name", "Value": "test-instance-1"},
-                                {"Key": "Environment", "Value": "test"}
-                            ]
+                                {"Key": "Environment", "Value": "test"},
+                            ],
                         }
                     ]
                 },
@@ -560,53 +666,48 @@ class TestConnectionInformation:
                         {
                             "InstanceId": "i-87654321",
                             "State": {"Name": "running"},
-                            "Tags": [
-                                {"Key": "Name", "Value": "test-instance-2"}
-                            ]
+                            "Tags": [{"Key": "Name", "Value": "test-instance-2"}],
                             # No PublicIpAddress key - should default to "No public IP"
                         }
                     ]
-                }
+                },
             ]
         }
-        
+
         aws_manager.ec2_client.describe_instances.return_value = mock_response
-        
+
         instance_ids = ["i-12345678", "i-87654321"]
         result = aws_manager.get_instance_connection_info(instance_ids)
-        
+
         assert len(result) == 2
-        
+
         # Check first instance
         assert result[0]["instance_id"] == "i-12345678"
         assert result[0]["name"] == "test-instance-1"
         assert result[0]["public_ip"] == "54.123.45.67"
         assert result[0]["state"] == "running"
-        
+
         # Check second instance (no public IP)
         assert result[1]["instance_id"] == "i-87654321"
         assert result[1]["name"] == "test-instance-2"
         assert result[1]["public_ip"] == "No public IP"
         assert result[1]["state"] == "running"
-        
-        aws_manager.ec2_client.describe_instances.assert_called_once_with(InstanceIds=instance_ids)
+
+        aws_manager.ec2_client.describe_instances.assert_called_once_with(
+            InstanceIds=instance_ids
+        )
 
     def test_get_instance_connection_info_empty_list(self, aws_manager):
         """Test getting connection information with empty instance list."""
         result = aws_manager.get_instance_connection_info([])
-        
+
         assert result == []
         aws_manager.ec2_client.describe_instances.assert_not_called()
 
     def test_get_connection_info_by_spec(self, aws_manager):
         """Test getting connection information by specification."""
-        spec = {
-            "instances": [
-                {"name": "web-server"},
-                {"name": "app-server"}
-            ]
-        }
-        
+        spec = {"instances": [{"name": "web-server"}, {"name": "app-server"}]}
+
         # Mock responses for each instance lookup
         def mock_describe_instances(**kwargs):
             filters = kwargs.get("Filters", [])
@@ -621,7 +722,7 @@ class TestConnectionInformation:
                                     {
                                         "InstanceId": "i-web123",
                                         "PublicIpAddress": "1.2.3.4",
-                                        "State": {"Name": "running"}
+                                        "State": {"Name": "running"},
                                     }
                                 ]
                             }
@@ -634,7 +735,7 @@ class TestConnectionInformation:
                                 "Instances": [
                                     {
                                         "InstanceId": "i-app456",
-                                        "State": {"Name": "stopped"}
+                                        "State": {"Name": "stopped"},
                                         # No PublicIpAddress
                                     }
                                 ]
@@ -642,17 +743,17 @@ class TestConnectionInformation:
                         ]
                     }
             return {"Reservations": []}
-        
+
         aws_manager.ec2_client.describe_instances.side_effect = mock_describe_instances
-        
+
         result = aws_manager.get_connection_info_by_spec(spec)
-        
+
         assert len(result) == 2
         assert result[0]["name"] == "web-server"
         assert result[0]["instance_id"] == "i-web123"
         assert result[0]["public_ip"] == "1.2.3.4"
         assert result[0]["state"] == "running"
-        
+
         assert result[1]["name"] == "app-server"
         assert result[1]["instance_id"] == "i-app456"
         assert result[1]["public_ip"] == "No public IP"
@@ -665,44 +766,119 @@ class TestConnectionInformation:
                 {
                     "name": "test-instance",
                     "instance_type": "t3.micro",
-                    "ami_id": "ami-12345678"
+                    "ami_id": "ami-12345678",
                 }
             ]
         }
-        
+
         # Mock _get_existing_resources to return no existing resources
-        aws_manager._get_existing_resources = MagicMock(return_value={
-            "instances": [],
-            "volumes": [],
-            "alarms": []
-        })
-        
+        aws_manager._get_existing_resources = MagicMock(
+            return_value={"instances": [], "volumes": [], "alarms": []}
+        )
+
         # Mock _create_ec2_instance
         aws_manager._create_ec2_instance = MagicMock(return_value="i-123456789")
-        
+
         # Mock _create_and_attach_volumes
         aws_manager._create_and_attach_volumes = MagicMock(return_value=[])
-        
+
         # Mock _create_idle_shutdown_alarm
         aws_manager._create_idle_shutdown_alarm = MagicMock(return_value=None)
-        
+
         # Mock get_instance_connection_info
         mock_connection_info = [
             {
                 "instance_id": "i-123456789",
                 "name": "test-instance",
                 "public_ip": "1.2.3.4",
-                "state": "running"
+                "state": "running",
             }
         ]
-        aws_manager.get_instance_connection_info = MagicMock(return_value=mock_connection_info)
-        
+        aws_manager.get_instance_connection_info = MagicMock(
+            return_value=mock_connection_info
+        )
+
         result = aws_manager.provision_resources(spec)
-        
+
         assert "connection_info" in result
         assert result["connection_info"] == mock_connection_info
         assert len(result["instances"]) == 1
         assert result["instances"][0] == "i-123456789"
+
+
+class TestIAMRoleInstanceCreation:
+    """Test cases for IAM role instance creation."""
+
+    @pytest.fixture
+    def aws_manager(self):
+        """Create an AWSResourceManager instance with mocked AWS clients."""
+        with patch("boto3.Session") as mock_session:
+            mock_session.return_value.client.return_value = MagicMock()
+            mock_session.return_value.resource.return_value = MagicMock()
+            manager = AWSResourceManager(region="us-east-1")
+            return manager
+
+    def test_create_instance_with_iam_role(self, aws_manager):
+        """Test that IAM instance profile is correctly added to run_instances call."""
+        instance_spec = {
+            "name": "test-iam-instance",
+            "instance_type": "t3.micro",
+            "ami_id": "ami-12345678",
+            "iam_role": "my-instance-role",
+        }
+
+        # Mock the run_instances response
+        mock_response = {
+            "Instances": [
+                {"InstanceId": "i-1234567890abcdef0", "State": {"Name": "pending"}}
+            ]
+        }
+        aws_manager.ec2_client.run_instances.return_value = mock_response
+
+        # Mock the waiter
+        mock_waiter = MagicMock()
+        aws_manager.ec2_client.get_waiter.return_value = mock_waiter
+
+        # Call the method
+        instance_id = aws_manager._create_ec2_instance(instance_spec)
+
+        # Verify the run_instances call included IAM instance profile
+        aws_manager.ec2_client.run_instances.assert_called_once()
+        call_args = aws_manager.ec2_client.run_instances.call_args[1]
+
+        assert "IamInstanceProfile" in call_args
+        assert call_args["IamInstanceProfile"]["Name"] == "my-instance-role"
+        assert instance_id == "i-1234567890abcdef0"
+
+    def test_create_instance_without_iam_role(self, aws_manager):
+        """Test that IAM instance profile is not added when not specified."""
+        instance_spec = {
+            "name": "test-no-iam-instance",
+            "instance_type": "t3.micro",
+            "ami_id": "ami-12345678",
+        }
+
+        # Mock the run_instances response
+        mock_response = {
+            "Instances": [
+                {"InstanceId": "i-1234567890abcdef1", "State": {"Name": "pending"}}
+            ]
+        }
+        aws_manager.ec2_client.run_instances.return_value = mock_response
+
+        # Mock the waiter
+        mock_waiter = MagicMock()
+        aws_manager.ec2_client.get_waiter.return_value = mock_waiter
+
+        # Call the method
+        instance_id = aws_manager._create_ec2_instance(instance_spec)
+
+        # Verify the run_instances call did not include IAM instance profile
+        aws_manager.ec2_client.run_instances.assert_called_once()
+        call_args = aws_manager.ec2_client.run_instances.call_args[1]
+
+        assert "IamInstanceProfile" not in call_args
+        assert instance_id == "i-1234567890abcdef1"
 
 
 if __name__ == "__main__":

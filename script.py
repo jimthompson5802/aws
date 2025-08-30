@@ -33,7 +33,7 @@ class AWSResourceManager:
         """
         self.region = region
         self.profile = profile
-        
+
         # Create boto3 session with or without profile
         if profile:
             self.session = boto3.Session(profile_name=profile)
@@ -42,8 +42,10 @@ class AWSResourceManager:
         else:
             self.session = boto3.Session()
             self.logger = logging.getLogger(__name__)
-            self.logger.info("Using default AWS credentials (environment variables or default profile)")
-        
+            self.logger.info(
+                "Using default AWS credentials (environment variables or default profile)"
+            )
+
         self.ec2_client = self.session.client("ec2", region_name=region)
         self.ec2_resource = self.session.resource("ec2", region_name=region)
         self.cloudwatch_client = self.session.client("cloudwatch", region_name=region)
@@ -113,45 +115,69 @@ class AWSResourceManager:
                     raise ValueError(
                         f"Missing required field '{field}' in instance {i}"
                     )
-            
+
             # Validate user data configuration
             if "user_data" in instance:
                 user_data = instance["user_data"]
                 if not isinstance(user_data, dict):
                     raise ValueError(f"user_data must be an object in instance {i}")
-                
+
                 if "script_path" in user_data and "inline_script" in user_data:
-                    raise ValueError(f"Cannot specify both script_path and inline_script in instance {i}")
-                
+                    raise ValueError(
+                        f"Cannot specify both script_path and inline_script in instance {i}"
+                    )
+
                 if "script_path" not in user_data and "inline_script" not in user_data:
-                    raise ValueError(f"user_data must contain either script_path or inline_script in instance {i}")
+                    raise ValueError(
+                        f"user_data must contain either script_path or inline_script in instance {i}"
+                    )
 
             # Validate idle shutdown configuration
             if "idle_shutdown" in instance:
                 idle_config = instance["idle_shutdown"]
                 if not isinstance(idle_config, dict):
                     raise ValueError(f"idle_shutdown must be an object in instance {i}")
-                
+
                 required_idle_fields = ["cpu_threshold", "evaluation_minutes"]
                 for field in required_idle_fields:
                     if field not in idle_config:
-                        raise ValueError(f"Missing required field '{field}' in idle_shutdown config for instance {i}")
-                
+                        raise ValueError(
+                            f"Missing required field '{field}' in idle_shutdown config for instance {i}"
+                        )
+
                 # Validate threshold is between 0 and 100
                 threshold = idle_config["cpu_threshold"]
-                if not isinstance(threshold, (int, float)) or threshold < 0 or threshold > 100:
-                    raise ValueError(f"cpu_threshold must be a number between 0 and 100 in instance {i}")
-                
+                if (
+                    not isinstance(threshold, (int, float))
+                    or threshold < 0
+                    or threshold > 100
+                ):
+                    raise ValueError(
+                        f"cpu_threshold must be a number between 0 and 100 in instance {i}"
+                    )
+
                 # Validate evaluation_minutes is positive
                 eval_mins = idle_config["evaluation_minutes"]
                 if not isinstance(eval_mins, int) or eval_mins <= 0:
-                    raise ValueError(f"evaluation_minutes must be a positive integer in instance {i}")
-                
+                    raise ValueError(
+                        f"evaluation_minutes must be a positive integer in instance {i}"
+                    )
+
                 # Validate action if specified
                 if "action" in idle_config:
                     valid_actions = ["stop", "terminate"]
                     if idle_config["action"] not in valid_actions:
-                        raise ValueError(f"idle_shutdown action must be one of {valid_actions} in instance {i}")
+                        raise ValueError(
+                            f"idle_shutdown action must be one of {valid_actions} in instance {i}"
+                        )
+
+            # Validate IAM role configuration
+            if "iam_role" in instance:
+                iam_role = instance["iam_role"]
+                if not isinstance(iam_role, str) or not iam_role.strip():
+                    raise ValueError(
+                        f"iam_role must be a non-empty string in instance {i}"
+                    )
 
         self.logger.info("Specification validation passed")
 
@@ -215,7 +241,7 @@ class AWSResourceManager:
             return ""
 
         user_data = instance_spec["user_data"]
-        
+
         try:
             if "script_path" in user_data:
                 # Load script from file
@@ -231,7 +257,7 @@ class AWSResourceManager:
                 return ""
 
             # Add logging wrapper to capture user data execution
-            wrapper_script = f'''#!/bin/bash
+            wrapper_script = f"""#!/bin/bash
 # AWS Automation Script - User Data Execution
 # Instance: {instance_spec["name"]}
 # Generated: {datetime.now().isoformat()}
@@ -253,12 +279,14 @@ echo "User Data Script Execution Completed"
 echo "Timestamp: $(date)"
 echo "Exit Code: $?"
 echo "=============================================="
-'''
+"""
 
             return wrapper_script
 
         except FileNotFoundError:
-            self.logger.error(f"User data script file not found: {user_data.get('script_path')}")
+            self.logger.error(
+                f"User data script file not found: {user_data.get('script_path')}"
+            )
             raise
         except Exception as e:
             self.logger.error(f"Failed to prepare user data script: {e}")
@@ -324,7 +352,17 @@ echo "=============================================="
         user_data_script = self._prepare_user_data(instance_spec)
         if user_data_script:
             instance_params["UserData"] = user_data_script
-            self.logger.info(f"Added user data script to instance {instance_spec['name']}")
+            self.logger.info(
+                f"Added user data script to instance {instance_spec['name']}"
+            )
+
+        # Add IAM instance profile if specified
+        if "iam_role" in instance_spec:
+            iam_role = instance_spec["iam_role"]
+            instance_params["IamInstanceProfile"] = {"Name": iam_role}
+            self.logger.info(
+                f"Added IAM instance profile {iam_role} to instance {instance_spec['name']}"
+            )
 
         try:
             response = self.ec2_client.run_instances(**instance_params)
@@ -440,7 +478,9 @@ echo "=============================================="
 
         return created_volume_ids
 
-    def _create_idle_shutdown_alarm(self, instance_id: str, instance_spec: Dict[str, Any]) -> str:
+    def _create_idle_shutdown_alarm(
+        self, instance_id: str, instance_spec: Dict[str, Any]
+    ) -> str:
         """Create CloudWatch alarm for idle shutdown detection.
 
         Args:
@@ -458,56 +498,58 @@ echo "=============================================="
 
         idle_config = instance_spec["idle_shutdown"]
         instance_name = instance_spec["name"]
-        
+
         # Default values
         cpu_threshold = idle_config["cpu_threshold"]
         evaluation_minutes = idle_config["evaluation_minutes"]
         action = idle_config.get("action", "stop")  # Default to stop
-        
+
         alarm_name = f"idle-shutdown-{instance_name}-{instance_id}"
         alarm_description = f"Idle shutdown alarm for {instance_name} - {action} instance when CPU < {cpu_threshold}% for {evaluation_minutes} minutes"
-        
+
         try:
             # Check if alarm already exists (for idempotency)
             try:
-                existing_alarms = self.cloudwatch_client.describe_alarms(AlarmNames=[alarm_name])
+                existing_alarms = self.cloudwatch_client.describe_alarms(
+                    AlarmNames=[alarm_name]
+                )
                 if existing_alarms.get("MetricAlarms"):
-                    self.logger.info(f"CloudWatch alarm {alarm_name} already exists, skipping creation")
+                    self.logger.info(
+                        f"CloudWatch alarm {alarm_name} already exists, skipping creation"
+                    )
                     return alarm_name
             except ClientError:
                 # Alarm doesn't exist, proceed with creation
                 pass
-            
+
             # Create the alarm
             self.cloudwatch_client.put_metric_alarm(
                 AlarmName=alarm_name,
                 AlarmDescription=alarm_description,
                 ActionsEnabled=True,
-                AlarmActions=[
-                    f"arn:aws:automate:{self.region}:ec2:{action}"
-                ],
+                AlarmActions=[f"arn:aws:automate:{self.region}:ec2:{action}"],
                 MetricName="CPUUtilization",
                 Namespace="AWS/EC2",
                 Statistic="Average",
-                Dimensions=[
-                    {
-                        "Name": "InstanceId",
-                        "Value": instance_id
-                    }
-                ],
+                Dimensions=[{"Name": "InstanceId", "Value": instance_id}],
                 Period=300,  # 5 minutes
-                EvaluationPeriods=evaluation_minutes // 5,  # Convert minutes to 5-minute periods
+                EvaluationPeriods=evaluation_minutes
+                // 5,  # Convert minutes to 5-minute periods
                 Threshold=cpu_threshold,
                 ComparisonOperator="LessThanThreshold",
-                TreatMissingData="notBreaching"  # Don't shutdown when missing data (e.g., during startup)
+                TreatMissingData="notBreaching",  # Don't shutdown when missing data (e.g., during startup)
             )
-            
-            self.logger.info(f"Created CloudWatch alarm: {alarm_name} for instance {instance_id}")
+
+            self.logger.info(
+                f"Created CloudWatch alarm: {alarm_name} for instance {instance_id}"
+            )
             self.created_resources["alarms"].append(alarm_name)
             return alarm_name
-            
+
         except ClientError as e:
-            self.logger.error(f"Failed to create CloudWatch alarm for instance {instance_id}: {e}")
+            self.logger.error(
+                f"Failed to create CloudWatch alarm for instance {instance_id}: {e}"
+            )
             raise
 
     def provision_resources(self, spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -534,9 +576,9 @@ echo "=============================================="
             connection_info = self.get_instance_connection_info(existing["instances"])
             return {
                 "instances": existing["instances"],
-                "volumes": existing["volumes"], 
+                "volumes": existing["volumes"],
                 "alarms": existing["alarms"],
-                "connection_info": connection_info
+                "connection_info": connection_info,
             }
 
         provisioned = {"instances": [], "volumes": [], "alarms": []}
@@ -552,12 +594,16 @@ echo "=============================================="
                 provisioned["volumes"].extend(volume_ids)
 
                 # Create CloudWatch idle shutdown alarm if configured
-                alarm_name = self._create_idle_shutdown_alarm(instance_id, instance_spec)
+                alarm_name = self._create_idle_shutdown_alarm(
+                    instance_id, instance_spec
+                )
                 if alarm_name:
                     provisioned["alarms"].append(alarm_name)
 
             # Get connection information for all provisioned instances
-            connection_info = self.get_instance_connection_info(provisioned["instances"])
+            connection_info = self.get_instance_connection_info(
+                provisioned["instances"]
+            )
             provisioned["connection_info"] = connection_info
 
             self.logger.info("Resource provisioning completed successfully")
@@ -580,7 +626,9 @@ echo "=============================================="
                 self.logger.info(f"Deleted CloudWatch alarm: {alarm_name}")
             except ClientError as e:
                 # Don't fail rollback if alarm deletion fails
-                self.logger.warning(f"Failed to delete CloudWatch alarm {alarm_name}: {e}")
+                self.logger.warning(
+                    f"Failed to delete CloudWatch alarm {alarm_name}: {e}"
+                )
 
         # Detach and delete volumes
         for volume_id in self.created_resources["volumes"]:
@@ -670,8 +718,12 @@ echo "=============================================="
                 # Check which alarms actually exist before trying to delete them
                 existing_alarms = []
                 try:
-                    response = self.cloudwatch_client.describe_alarms(AlarmNames=alarms_to_delete)
-                    existing_alarms = [alarm["AlarmName"] for alarm in response["MetricAlarms"]]
+                    response = self.cloudwatch_client.describe_alarms(
+                        AlarmNames=alarms_to_delete
+                    )
+                    existing_alarms = [
+                        alarm["AlarmName"] for alarm in response["MetricAlarms"]
+                    ]
                 except ClientError as e:
                     # If describe_alarms fails, we'll try to delete anyway and handle errors individually
                     self.logger.warning(f"Could not describe alarms: {e}")
@@ -682,7 +734,7 @@ echo "=============================================="
                     self.logger.info(f"Deleted CloudWatch alarms: {existing_alarms}")
                 else:
                     self.logger.info("No CloudWatch alarms found to delete")
-                    
+
             except ClientError as e:
                 # Don't fail the entire operation if alarm deletion fails
                 self.logger.warning(f"Failed to delete some CloudWatch alarms: {e}")
@@ -720,17 +772,19 @@ echo "=============================================="
         """
         try:
             # Get console output which includes user data execution
-            response = self.ec2_client.get_console_output(InstanceId=instance_id, Latest=True)
+            response = self.ec2_client.get_console_output(
+                InstanceId=instance_id, Latest=True
+            )
             console_output = response.get("Output", "")
-            
+
             self.logger.info(f"Retrieved console output for instance {instance_id}")
-            
+
             # Extract user data related logs
             if "User Data Script Execution" in console_output:
-                lines = console_output.split('\n')
+                lines = console_output.split("\n")
                 user_data_logs = []
                 capturing = False
-                
+
                 for line in lines:
                     if "User Data Script Execution Started" in line:
                         capturing = True
@@ -739,13 +793,15 @@ echo "=============================================="
                     if "User Data Script Execution Completed" in line:
                         capturing = False
                         break
-                
-                return '\n'.join(user_data_logs)
+
+                return "\n".join(user_data_logs)
             else:
                 return "No user data execution logs found in console output."
-                
+
         except ClientError as e:
-            self.logger.error(f"Failed to retrieve console output for {instance_id}: {e}")
+            self.logger.error(
+                f"Failed to retrieve console output for {instance_id}: {e}"
+            )
             raise
 
     def monitor_user_data_execution(self, spec: Dict[str, Any]) -> Dict[str, str]:
@@ -758,15 +814,15 @@ echo "=============================================="
             Dictionary mapping instance names to their user data execution logs
         """
         self.logger.info("Monitoring user data script execution...")
-        
+
         logs = {}
-        
+
         for instance_spec in spec["instances"]:
             if "user_data" not in instance_spec:
                 continue
-                
+
             instance_name = instance_spec["name"]
-            
+
             # Find the instance by name tag
             try:
                 response = self.ec2_client.describe_instances(
@@ -775,23 +831,27 @@ echo "=============================================="
                         {"Name": "instance-state-name", "Values": ["running"]},
                     ]
                 )
-                
+
                 for reservation in response["Reservations"]:
                     for instance in reservation["Instances"]:
                         instance_id = instance["InstanceId"]
-                        
+
                         try:
                             user_data_logs = self.get_user_data_logs(instance_id)
                             logs[instance_name] = user_data_logs
-                            self.logger.info(f"Retrieved user data logs for {instance_name} ({instance_id})")
+                            self.logger.info(
+                                f"Retrieved user data logs for {instance_name} ({instance_id})"
+                            )
                         except Exception as e:
                             logs[instance_name] = f"Failed to retrieve logs: {e}"
-                            self.logger.error(f"Failed to retrieve user data logs for {instance_name}: {e}")
-                            
+                            self.logger.error(
+                                f"Failed to retrieve user data logs for {instance_name}: {e}"
+                            )
+
             except ClientError as e:
                 logs[instance_name] = f"Failed to find instance: {e}"
                 self.logger.error(f"Failed to find instance {instance_name}: {e}")
-        
+
         return logs
 
     def get_cloudwatch_alarms(self, spec: Dict[str, Any]) -> Dict[str, str]:
@@ -804,15 +864,15 @@ echo "=============================================="
             Dictionary mapping instance names to alarm states
         """
         alarm_states = {}
-        
+
         for instance_spec in spec["instances"]:
             instance_name = instance_spec["name"]
-            
+
             # Skip instances without idle shutdown configuration
             if "idle_shutdown" not in instance_spec:
                 alarm_states[instance_name] = "No idle shutdown configured"
                 continue
-            
+
             try:
                 # Find the instance
                 response = self.ec2_client.describe_instances(
@@ -830,39 +890,43 @@ echo "=============================================="
                     for instance in reservation["Instances"]:
                         instance_id = instance["InstanceId"]
                         alarm_name = f"idle-shutdown-{instance_name}-{instance_id}"
-                        
+
                         # Check alarm state
                         try:
                             alarm_response = self.cloudwatch_client.describe_alarms(
                                 AlarmNames=[alarm_name]
                             )
-                            
+
                             if alarm_response.get("MetricAlarms"):
                                 alarm = alarm_response["MetricAlarms"][0]
                                 state = alarm.get("StateValue", "UNKNOWN")
                                 reason = alarm.get("StateReason", "")
-                                alarm_states[instance_name] = f"Alarm: {state} - {reason}"
+                                alarm_states[instance_name] = (
+                                    f"Alarm: {state} - {reason}"
+                                )
                             else:
                                 alarm_states[instance_name] = "Alarm not found"
-                                
+
                         except ClientError as e:
                             alarm_states[instance_name] = f"Error checking alarm: {e}"
-                        
+
                         instance_found = True
                         break
-                    
+
                     if instance_found:
                         break
-                
+
                 if not instance_found:
                     alarm_states[instance_name] = "Instance not found"
-                    
+
             except ClientError as e:
                 alarm_states[instance_name] = f"Error finding instance: {e}"
-        
+
         return alarm_states
 
-    def get_instance_connection_info(self, instance_ids: List[str]) -> List[Dict[str, str]]:
+    def get_instance_connection_info(
+        self, instance_ids: List[str]
+    ) -> List[Dict[str, str]]:
         """Get connection information for instances.
 
         Args:
@@ -875,37 +939,43 @@ echo "=============================================="
             ClientError: If unable to retrieve instance information
         """
         connection_info = []
-        
+
         if not instance_ids:
             return connection_info
-            
+
         try:
             response = self.ec2_client.describe_instances(InstanceIds=instance_ids)
-            
+
             for reservation in response["Reservations"]:
                 for instance in reservation["Instances"]:
                     instance_id = instance["InstanceId"]
                     instance_name = "Unknown"
                     public_ip = instance.get("PublicIpAddress", "No public IP")
-                    
+
                     # Get instance name from tags
                     for tag in instance.get("Tags", []):
                         if tag["Key"] == "Name":
                             instance_name = tag["Value"]
                             break
-                    
-                    connection_info.append({
-                        "instance_id": instance_id,
-                        "name": instance_name,
-                        "public_ip": public_ip,
-                        "state": instance["State"]["Name"]
-                    })
-                    
-            self.logger.info(f"Retrieved connection information for {len(connection_info)} instances")
+
+                    connection_info.append(
+                        {
+                            "instance_id": instance_id,
+                            "name": instance_name,
+                            "public_ip": public_ip,
+                            "state": instance["State"]["Name"],
+                        }
+                    )
+
+            self.logger.info(
+                f"Retrieved connection information for {len(connection_info)} instances"
+            )
             return connection_info
-            
+
         except ClientError as e:
-            self.logger.error(f"Failed to retrieve instance connection information: {e}")
+            self.logger.error(
+                f"Failed to retrieve instance connection information: {e}"
+            )
             raise
 
     def get_connection_info_by_spec(self, spec: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -921,10 +991,10 @@ echo "=============================================="
             ClientError: If unable to retrieve instance information
         """
         all_connection_info = []
-        
+
         for instance_spec in spec["instances"]:
             instance_name = instance_spec["name"]
-            
+
             try:
                 # Find instances by name tag
                 response = self.ec2_client.describe_instances(
@@ -936,29 +1006,33 @@ echo "=============================================="
                         },
                     ]
                 )
-                
+
                 for reservation in response["Reservations"]:
                     for instance in reservation["Instances"]:
                         instance_id = instance["InstanceId"]
                         public_ip = instance.get("PublicIpAddress", "No public IP")
-                        
-                        all_connection_info.append({
-                            "instance_id": instance_id,
-                            "name": instance_name,
-                            "public_ip": public_ip,
-                            "state": instance["State"]["Name"]
-                        })
-                        
+
+                        all_connection_info.append(
+                            {
+                                "instance_id": instance_id,
+                                "name": instance_name,
+                                "public_ip": public_ip,
+                                "state": instance["State"]["Name"],
+                            }
+                        )
+
             except ClientError as e:
                 self.logger.error(f"Failed to find instance {instance_name}: {e}")
                 # Add entry indicating instance not found
-                all_connection_info.append({
-                    "instance_id": "N/A",
-                    "name": instance_name,
-                    "public_ip": "Instance not found",
-                    "state": "unknown"
-                })
-        
+                all_connection_info.append(
+                    {
+                        "instance_id": "N/A",
+                        "name": instance_name,
+                        "public_ip": "Instance not found",
+                        "state": "unknown",
+                    }
+                )
+
         return all_connection_info
 
 
@@ -968,9 +1042,9 @@ def main():
         description="AWS Compute and Storage Automation Script"
     )
     parser.add_argument(
-        "action", 
-        choices=["create", "delete", "monitor", "monitor-alarms", "connection-info"], 
-        help="Action to perform: create resources, delete resources, monitor user data execution, monitor CloudWatch alarms, or get connection info"
+        "action",
+        choices=["create", "delete", "monitor", "monitor-alarms", "connection-info"],
+        help="Action to perform: create resources, delete resources, monitor user data execution, monitor CloudWatch alarms, or get connection info",
     )
     parser.add_argument(
         "--spec", "-s", required=True, help="Path to YAML specification file"
@@ -993,14 +1067,18 @@ def main():
         # Load specification first to check for profile in YAML
         with open(args.spec, "r") as f:
             spec = yaml.safe_load(f)
-        
+
         # Determine which profile to use (command line takes precedence over YAML)
         profile_to_use = args.profile or spec.get("profile")
-        
+
         manager = AWSResourceManager(region=args.region, profile=profile_to_use)
         spec = manager.load_specification(args.spec)
 
-        if args.dry_run and args.action not in ["monitor", "monitor-alarms", "connection-info"]:
+        if args.dry_run and args.action not in [
+            "monitor",
+            "monitor-alarms",
+            "connection-info",
+        ]:
             print(f"DRY RUN: Would {args.action} resources according to specification:")
             if profile_to_use:
                 print(f"Using AWS profile: {profile_to_use}")
@@ -1012,7 +1090,7 @@ def main():
         if args.action == "create":
             resources = manager.provision_resources(spec)
             print(f"Successfully created resources: {resources}")
-            
+
             # Display connection information
             connection_info = resources.get("connection_info", [])
             if connection_info:
@@ -1024,14 +1102,18 @@ def main():
                     print(f"Instance ID: {info['instance_id']}")
                     print(f"Public IP Address: {info['public_ip']}")
                     print(f"State: {info['state']}")
-                    if info['public_ip'] != "No public IP":
-                        print(f"SSH Command: ssh -i <your-key.pem> ec2-user@{info['public_ip']}")
+                    if info["public_ip"] != "No public IP":
+                        print(
+                            f"SSH Command: ssh -i <your-key.pem> ec2-user@{info['public_ip']}"
+                        )
                     print("-" * 60)
-            
+
             # Check if any instances have user data and offer to monitor
             has_user_data = any("user_data" in inst for inst in spec["instances"])
-            has_idle_shutdown = any("idle_shutdown" in inst for inst in spec["instances"])
-            
+            has_idle_shutdown = any(
+                "idle_shutdown" in inst for inst in spec["instances"]
+            )
+
             if has_user_data:
                 print("\nInstances with user data scripts detected.")
                 print("You can monitor user data execution with:")
@@ -1039,7 +1121,7 @@ def main():
                 if profile_to_use:
                     monitor_cmd += f" --profile {profile_to_use}"
                 print(monitor_cmd)
-            
+
             if has_idle_shutdown:
                 print("\nInstances with idle shutdown alarms detected.")
                 print("You can monitor CloudWatch alarms with:")
@@ -1047,11 +1129,11 @@ def main():
                 if profile_to_use:
                     monitor_alarm_cmd += f" --profile {profile_to_use}"
                 print(monitor_alarm_cmd)
-                
+
         elif args.action == "delete":
             manager.delete_resources(spec)
             print("Successfully deleted resources")
-            
+
         elif args.action == "monitor":
             logs = manager.monitor_user_data_execution(spec)
             print("\nUser Data Execution Logs:")
@@ -1061,7 +1143,7 @@ def main():
                 print("-" * 30)
                 print(log_content)
                 print("-" * 30)
-                
+
         elif args.action == "monitor-alarms":
             alarm_states = manager.get_cloudwatch_alarms(spec)
             print("\nCloudWatch Idle Shutdown Alarms:")
@@ -1070,7 +1152,7 @@ def main():
                 print(f"Instance: {instance_name}")
                 print(f"Status: {alarm_status}")
                 print("-" * 30)
-                
+
         elif args.action == "connection-info":
             connection_info = manager.get_connection_info_by_spec(spec)
             print("\n" + "=" * 60)
@@ -1082,8 +1164,13 @@ def main():
                     print(f"Instance ID: {info['instance_id']}")
                     print(f"Public IP Address: {info['public_ip']}")
                     print(f"State: {info['state']}")
-                    if info['public_ip'] != "No public IP" and info['public_ip'] != "Instance not found":
-                        print(f"SSH Command: ssh -i <your-key.pem> ec2-user@{info['public_ip']}")
+                    if (
+                        info["public_ip"] != "No public IP"
+                        and info["public_ip"] != "Instance not found"
+                    ):
+                        print(
+                            f"SSH Command: ssh -i <your-key.pem> ec2-user@{info['public_ip']}"
+                        )
                     print("-" * 60)
             else:
                 print("No instances found matching the specification.")

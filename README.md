@@ -270,6 +270,7 @@ MIT License
 - `key_name`: EC2 Key Pair name for SSH access
 - `security_groups`: List of Security Group IDs
 - `subnet_id`: Subnet ID for VPC deployment
+- `iam_role`: IAM instance profile name to associate with the instance
 - `tags`: List of custom tags (Key/Value pairs)
 - `volumes`: List of additional EBS volumes
 
@@ -376,6 +377,60 @@ instances:
         type: "gp3"
         device: "/dev/sdf"
 ```
+
+### Instance with IAM Role
+
+```yaml
+instances:
+  - name: "data-processor"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"
+    iam_role: "EC2-S3-ReadOnly-Role"  # IAM instance profile name
+    user_data:
+      inline_script: |
+        #!/bin/bash
+        # This instance can access S3 using the IAM role
+        yum install -y awscli
+        aws s3 ls  # List S3 buckets using IAM role permissions
+```
+
+## IAM Roles
+
+### Overview
+
+IAM roles provide secure, temporary credentials to EC2 instances without the need to store long-term access keys on the instance. This is the recommended way to grant AWS permissions to applications running on EC2.
+
+### Setting Up IAM Roles
+
+1. **Create an IAM Role**: In the AWS Console, create a new IAM role with:
+   - **Trusted entity**: AWS Service → EC2
+   - **Permissions**: Attach policies for the AWS services your instance needs access to
+   - **Role name**: Give it a descriptive name (e.g., "EC2-S3-ReadOnly-Role")
+
+2. **Create Instance Profile**: AWS automatically creates an instance profile with the same name as your role
+
+3. **Use in YAML**: Reference the role name in your specification:
+   ```yaml
+   instances:
+     - name: "my-instance"
+       instance_type: "t3.micro"
+       ami_id: "ami-0c02fb55956c7d316"
+       iam_role: "EC2-S3-ReadOnly-Role"  # Use the role name here
+   ```
+
+### Common IAM Role Examples
+
+- **S3 Access**: `AmazonS3ReadOnlyAccess` or `AmazonS3FullAccess`
+- **CloudWatch**: `CloudWatchAgentServerPolicy`
+- **Systems Manager**: `AmazonSSMManagedInstanceCore`
+- **ECS**: `AmazonECS_FullAccess`
+
+### Security Best Practices
+
+- Use specific, minimal permissions rather than broad policies
+- Regularly review and audit role permissions
+- Use separate roles for different application tiers
+- Never use long-term access keys on EC2 instances when roles are available
 
 ## Logging
 

@@ -10,6 +10,7 @@ instances:
     security_groups:  # Optional: Security Group IDs
       - "sg-12345678"
     subnet_id: "subnet-12345678"  # Optional: Subnet ID
+    iam_role: "my-instance-role"  # Optional: IAM instance profile name
     tags:  # Optional: Custom tags
       - Key: "Environment"
         Value: "production"

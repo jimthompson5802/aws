@@ -13,6 +13,7 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **User Data Script Support**: Complete implementation of bash script execution on instance startup
 - **Script Monitoring**: Real-time monitoring and log retrieval for user data execution
 - **AWS Profile Support**: Complete implementation of AWS profile authentication (NEW)
+- **IAM Role Support**: Complete implementation of IAM instance profile assignment (NEW)
 - **Idempotency**: Prevention of duplicate resource creation
 - **Error Handling**: Comprehensive error handling with automatic rollback
 - **Logging**: Detailed logging to both console and file
@@ -25,6 +26,16 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - **Fallback to Default**: Automatic fallback to environment variables/default profile
 - **Comprehensive Validation**: Profile field validation in YAML specifications
 - **Enhanced Documentation**: Complete documentation of all authentication methods
+
+### ✅ IAM Role Support Implementation (NEW)
+- **YAML Configuration**: Support for `iam_role` field in instance specifications
+- **Instance Profile Assignment**: Automatic attachment of IAM instance profiles during EC2 creation
+- **Validation**: Comprehensive validation of IAM role configuration (non-empty string)
+- **Security Best Practices**: Enables secure, temporary credential access without storing keys
+- **Example Configurations**: Multiple example YAML files demonstrating different IAM role scenarios
+- **Integration**: Seamless integration with existing EC2 provisioning workflow
+- **Testing**: Complete test coverage for IAM role validation and assignment
+- **Documentation**: Comprehensive documentation including security best practices
 
 ### ✅ User Data Implementation (NEW)
 - **Script Path Support**: Load user data scripts from external files
@@ -77,6 +88,7 @@ I have successfully implemented the AWS Compute and Storage Automation Script ac
 - `script.py` - Main automation script with full user data and profile support
 - `example_spec.yaml` - Example YAML specification with user data examples
 - `example_with_profile.yaml` - Example YAML specification demonstrating profile feature (NEW)
+- `example_with_iam_role.yaml` - Example YAML specification demonstrating IAM role feature (NEW)
 - `dev-requirements.txt` - Updated with boto3 and PyYAML dependencies
 - `README.md` - Comprehensive documentation with user data and profile features
 

@@ -18,10 +18,12 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
      - Storage volumes: size, type, device mapping, IOPS, encrypted, etc.
      - **User data script**: optional bash script path or inline script content for instance customization.
      - **Idle Shutdown Policy**: optional configuration to define a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., low CPU utilization) for a pre-defined time period.  Do not shutdown the instance when the EC2 instance first starts up and is missing alert data.  Only shutdown the instance if there is sufficient alert data to determine that the instance is idle.
+     - **IAM role**: optional IAM role to associate with the EC2 instance(s).
 
 2. **Resource Provisioning** ✅ IMPLEMENTED
    - Create one or more EC2 instance(s) as per the specification.
    - Attach EBS volumes as specified.
+   - Associate IAM role with the instance(s) if specified.
    - Tag resources appropriately.
    - **Execute user data script on instance startup** (if specified).
    - **Configure CloudWatch Alarm for Idle Shutdown**: If specified in the YAML, create a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., CPU utilization below a threshold) for a specified duration.

@@ -1,0 +1,132 @@
+# Example YAML specification demonstrating IAM role assignment to EC2 instances
+# This example shows how to associate an IAM instance profile with EC2 instances
+
+instances:
+  - name: "web-server-with-s3-access"
+    instance_type: "t3.micro"
+    ami_id: "ami-0c02fb55956c7d316"  # Amazon Linux 2 AMI (update for your region)
+    market_type: "on-demand"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-12345678"
+    subnet_id: "subnet-12345678"
+    iam_role: "EC2-S3-ReadOnly-Role"  # IAM instance profile name
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Project"
+        Value: "web-app"
+      - Key: "Role"
+        Value: "web-server"
+    user_data:
+      script_path: "examples/python_web_server.sh"
+    volumes:
+      - size: 20
+        type: "gp3"
+        device: "/dev/sdf"
+        encrypted: true
+
+  - name: "data-processor-with-full-s3"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "spot"
+    spot_price: "0.05"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-87654321"
+    iam_role: "EC2-S3-FullAccess-Role"  # Different IAM role for data processing
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Project"
+        Value: "data-pipeline"
+      - Key: "Role"
+        Value: "data-processor"
+    user_data:
+      inline_script: |
+        #!/bin/bash
+        yum update -y
+        yum install -y python3 python3-pip
+        pip3 install boto3 pandas numpy
+        
+        # Create a data processing script that uses S3
+        cat > /home/ec2-user/process_data.py << 'EOF'
+        import boto3
+        import pandas as pd
+        
+        # This script can access S3 using the IAM role
+        s3 = boto3.client('s3')
+        
+        # List buckets to verify access
+        response = s3.list_buckets()
+        print("Available S3 buckets:")
+        for bucket in response['Buckets']:
+            print(f"  - {bucket['Name']}")
+        EOF
+        
+        chown ec2-user:ec2-user /home/ec2-user/process_data.py
+    volumes:
+      - size: 100
+        type: "gp3"
+        device: "/dev/sdf"
+        iops: 3000
+        encrypted: true
+
+  - name: "monitoring-server-with-cloudwatch"
+    instance_type: "t3.small"
+    ami_id: "ami-0c02fb55956c7d316"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-monitoring"
+    iam_role: "EC2-CloudWatch-Agent-Role"  # IAM role for CloudWatch access
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Project"
+        Value: "monitoring"
+      - Key: "Role"
+        Value: "monitoring-server"
+    # CloudWatch idle shutdown configuration
+    idle_shutdown:
+      cpu_threshold: 15.0
+      evaluation_minutes: 30
+      action: "stop"
+    user_data:
+      inline_script: |
+        #!/bin/bash
+        yum update -y
+        
+        # Install CloudWatch agent
+        wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+        rpm -U ./amazon-cloudwatch-agent.rpm
+        
+        # The IAM role allows the agent to send metrics to CloudWatch
+        echo "CloudWatch agent installed and will use IAM role for authentication"
+
+# IAM Role Requirements for the above examples:
+#
+# 1. EC2-S3-ReadOnly-Role should have:
+#    - AmazonS3ReadOnlyAccess policy
+#    - Trust relationship allowing EC2 service to assume the role
+#
+# 2. EC2-S3-FullAccess-Role should have:
+#    - AmazonS3FullAccess policy
+#    - Trust relationship allowing EC2 service to assume the role
+#
+# 3. EC2-CloudWatch-Agent-Role should have:
+#    - CloudWatchAgentServerPolicy
+#    - Trust relationship allowing EC2 service to assume the role
+#
+# Example trust policy for all roles:
+# {
+#   "Version": "2012-10-17",
+#   "Statement": [
+#     {
+#       "Effect": "Allow",
+#       "Principal": {
+#         "Service": "ec2.amazonaws.com"
+#       },
+#       "Action": "sts:AssumeRole"
+#     }
+#   ]
+# }
