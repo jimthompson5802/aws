@@ -456,6 +456,16 @@ The script checks for existing resources before creating new ones. If instances 
 
 ## Troubleshooting
 
+### Retrieve ec2 instance metatadata
+
+```bash
+TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+```
+
+```bash
+curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/
+```
+
 ### Common Issues
 
 1. **Permission Denied**: Ensure your AWS credentials have the required permissions
