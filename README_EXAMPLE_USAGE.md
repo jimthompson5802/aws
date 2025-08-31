@@ -175,6 +175,12 @@ flowchart LR
 #### VSCode Git Integration
 ![VSCode Git Integration](./images/07_vscode_git_tool.png)
 
+#### Github Copilot Chat
+![Github Copilot](./images/08_ghcp_chat.png)
+
+#### Github Copilot Autocomplete
+![Github Copilot Autocomplete](./images/09_ghcp_autocomplete_ghost_text.png)
+
 ### Shutdown AWS Resources
 ```bash
 python script.py --spec setup/gpu_setup.yaml --profile ec2-user delete
