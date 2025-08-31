@@ -161,7 +161,7 @@ flowchart LR
 ![Remote Host Environment](./images/02_remote_host_environment.png)
 
 #### VSCode Extensions on Remote
-![VSCode Extensions on Remote](./images/03_vscode_extensions_remote.png)
+![VSCode Extensions on Remote](./images/03_vscode_extensions_on_remote.png)
 
 #### nVidia SMI Command Output
 ![nVidia SMI Command Output](./images/04_nvidia-smi_output.png)
