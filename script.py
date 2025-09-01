@@ -196,30 +196,57 @@ class AWSResourceManager:
             instance_idx: Instance index for error reporting
             volume_idx: Volume index for error reporting
         """
-        # Check required fields
-        required_fields = ["size"]
-        for field in required_fields:
-            if field not in volume_spec:
-                raise ValueError(
-                    f"Volume specification missing required field '{field}' "
-                    f"in instance {instance_idx}, volume {volume_idx}"
-                )
+        # Check for either size (new volume) or snapshot_id (restore from snapshot)
+        has_size = "size" in volume_spec
+        has_snapshot_id = "snapshot_id" in volume_spec
 
-        # Validate size
-        size = volume_spec["size"]
-        if not isinstance(size, int) or size <= 0:
+        if not has_size and not has_snapshot_id:
             raise ValueError(
-                f"Volume size must be a positive integer in instance {instance_idx}, volume {volume_idx}"
+                f"Volume specification must have either 'size' (for new volume) or "
+                f"'snapshot_id' (for snapshot restoration) "
+                f"in instance {instance_idx}, volume {volume_idx}"
             )
 
-        # Validate volume type if specified
-        if "type" in volume_spec:
-            valid_types = ["gp2", "gp3", "io1", "io2", "st1", "sc1"]
-            if volume_spec["type"] not in valid_types:
+        if has_size and has_snapshot_id:
+            raise ValueError(
+                f"Volume specification cannot have both 'size' and 'snapshot_id' "
+                f"in instance {instance_idx}, volume {volume_idx}. Use one method only."
+            )
+
+        # Validate size for new volumes
+        if has_size:
+            size = volume_spec["size"]
+            if not isinstance(size, int) or size <= 0:
                 raise ValueError(
-                    f"Invalid volume type '{volume_spec['type']}' in instance {instance_idx}, "
-                    f"volume {volume_idx}. Must be one of: {valid_types}"
+                    f"Volume size must be a positive integer in instance {instance_idx}, volume {volume_idx}"
                 )
+
+        # Validate snapshot_id for restored volumes
+        if has_snapshot_id:
+            snapshot_id = volume_spec["snapshot_id"]
+            if not isinstance(snapshot_id, str) or not snapshot_id.strip():
+                raise ValueError(
+                    f"Snapshot ID must be a non-empty string in instance {instance_idx}, volume {volume_idx}"
+                )
+            if not snapshot_id.startswith("snap-"):
+                raise ValueError(
+                    f"Snapshot ID must start with 'snap-' in instance {instance_idx}, volume {volume_idx}"
+                )
+
+        # Validate volume type if specified (only for new volumes)
+        if "type" in volume_spec:
+            if has_snapshot_id:
+                self.logger.warning(
+                    f"Volume type specified for snapshot restoration in instance {instance_idx}, "
+                    f"volume {volume_idx}. Type will be inherited from snapshot."
+                )
+            else:
+                valid_types = ["gp2", "gp3", "io1", "io2", "st1", "sc1"]
+                if volume_spec["type"] not in valid_types:
+                    raise ValueError(
+                        f"Invalid volume type '{volume_spec['type']}' in instance {instance_idx}, "
+                        f"volume {volume_idx}. Must be one of: {valid_types}"
+                    )
 
         # Validate mount point if specified
         if "mount_point" in volume_spec:
@@ -251,14 +278,20 @@ class AWSResourceManager:
                     f"in instance {instance_idx}, volume {volume_idx}"
                 )
 
-        # Validate filesystem type if specified
+        # Validate filesystem type if specified (only for new volumes)
         if "filesystem" in volume_spec:
-            supported_filesystems = ["ext4", "xfs", "btrfs"]
-            if volume_spec["filesystem"] not in supported_filesystems:
-                raise ValueError(
-                    f"Unsupported filesystem '{volume_spec['filesystem']}' in instance {instance_idx}, "
-                    f"volume {volume_idx}. Supported: {supported_filesystems}"
+            if has_snapshot_id:
+                self.logger.warning(
+                    f"Filesystem specified for snapshot restoration in instance {instance_idx}, "
+                    f"volume {volume_idx}. Filesystem will be inherited from snapshot."
                 )
+            else:
+                supported_filesystems = ["ext4", "xfs", "btrfs"]
+                if volume_spec["filesystem"] not in supported_filesystems:
+                    raise ValueError(
+                        f"Unsupported filesystem '{volume_spec['filesystem']}' in instance {instance_idx}, "
+                        f"volume {volume_idx}. Supported: {supported_filesystems}"
+                    )
 
         # Validate mount options if specified
         if "mount_options" in volume_spec:
@@ -673,12 +706,12 @@ class AWSResourceManager:
             instance_spec: Instance specification containing volume definitions
 
         Returns:
-            List of created volume IDs
+            List of created/restored volume IDs
         """
-        created_volume_ids = []
+        volume_ids = []
 
         if "volumes" not in instance_spec:
-            return created_volume_ids
+            return volume_ids
 
         # Get instance AZ
         try:
@@ -692,72 +725,175 @@ class AWSResourceManager:
 
         for volume_spec in instance_spec["volumes"]:
             try:
-                volume_params = {
-                    "Size": volume_spec["size"],
-                    "VolumeType": volume_spec.get("type", "gp3"),
-                    "AvailabilityZone": availability_zone,
-                    "TagSpecifications": [
-                        {
-                            "ResourceType": "volume",
-                            "Tags": [
-                                {
-                                    "Key": "Name",
-                                    "Value": f"{instance_spec['name']}-{volume_spec.get('device', 'additional')}",
-                                },
-                                {"Key": "CreatedBy", "Value": "aws-automation-script"},
-                                {
-                                    "Key": "CreatedAt",
-                                    "Value": datetime.now().isoformat(),
-                                },
-                            ],
-                        }
-                    ],
-                }
+                volume_id = None
 
-                # Add optional volume parameters
-                if "iops" in volume_spec and volume_spec.get("type") in [
-                    "gp3",
-                    "io1",
-                    "io2",
-                ]:
-                    volume_params["Iops"] = volume_spec["iops"]
+                # Method 1: Create new volume
+                if "size" in volume_spec:
+                    volume_id = self._create_new_volume(
+                        volume_spec, availability_zone, instance_spec
+                    )
 
-                if volume_spec.get("encrypted", False):
-                    volume_params["Encrypted"] = True
+                # Method 2: Restore from snapshot
+                elif "snapshot_id" in volume_spec:
+                    volume_id = self._restore_volume_from_snapshot(
+                        volume_spec, availability_zone, instance_spec
+                    )
 
-                # Create volume
-                response = self.ec2_client.create_volume(**volume_params)
-                volume_id = response["VolumeId"]
+                if volume_id:
+                    volume_ids.append(volume_id)
 
-                self.logger.info(f"Created EBS volume: {volume_id}")
-                self.created_resources["volumes"].append(volume_id)
-                created_volume_ids.append(volume_id)
+                    # Wait for volume to be available
+                    waiter = self.ec2_client.get_waiter("volume_available")
+                    waiter.wait(
+                        VolumeIds=[volume_id],
+                        WaiterConfig={"Delay": 5, "MaxAttempts": 60},
+                    )
 
-                # Wait for volume to be available
-                waiter = self.ec2_client.get_waiter("volume_available")
-                waiter.wait(
-                    VolumeIds=[volume_id], WaiterConfig={"Delay": 5, "MaxAttempts": 60}
-                )
+                    # Attach volume
+                    device = volume_spec.get("device", "/dev/sdf")
+                    self.ec2_client.attach_volume(
+                        VolumeId=volume_id, InstanceId=instance_id, Device=device
+                    )
 
-                # Attach volume
-                device = volume_spec.get("device", "/dev/sdf")
-                self.ec2_client.attach_volume(
-                    VolumeId=volume_id, InstanceId=instance_id, Device=device
-                )
-
-                self.logger.info(
-                    f"Attached volume {volume_id} to instance {instance_id} at {device}"
-                )
+                    self.logger.info(
+                        f"Attached volume {volume_id} to instance {instance_id} at {device}"
+                    )
 
             except ClientError as e:
                 self.logger.error(f"Failed to create/attach volume: {e}")
                 raise
 
-        return created_volume_ids
+        return volume_ids
+
+    def _create_new_volume(
+        self,
+        volume_spec: Dict[str, Any],
+        availability_zone: str,
+        instance_spec: Dict[str, Any],
+    ) -> str:
+        """Create a new EBS volume.
+
+        Args:
+            volume_spec: Volume specification
+            availability_zone: AZ where volume should be created
+            instance_spec: Instance specification for naming
+
+        Returns:
+            Volume ID of created volume
+        """
+        volume_params = {
+            "Size": volume_spec["size"],
+            "VolumeType": volume_spec.get("type", "gp3"),
+            "AvailabilityZone": availability_zone,
+            "TagSpecifications": [
+                {
+                    "ResourceType": "volume",
+                    "Tags": [
+                        {
+                            "Key": "Name",
+                            "Value": f"{instance_spec['name']}-{volume_spec.get('device', 'additional')}",
+                        },
+                        {"Key": "CreatedBy", "Value": "aws-automation-script"},
+                        {
+                            "Key": "CreatedAt",
+                            "Value": datetime.now().isoformat(),
+                        },
+                    ],
+                }
+            ],
+        }
+
+        # Add optional volume parameters
+        if "iops" in volume_spec and volume_spec.get("type") in [
+            "gp3",
+            "io1",
+            "io2",
+        ]:
+            volume_params["Iops"] = volume_spec["iops"]
+
+        if volume_spec.get("encrypted", False):
+            volume_params["Encrypted"] = True
+
+        # Create volume
+        response = self.ec2_client.create_volume(**volume_params)
+        volume_id = response["VolumeId"]
+
+        self.logger.info(f"Created EBS volume: {volume_id}")
+        self.created_resources["volumes"].append(volume_id)
+
+        return volume_id
+
+    def _restore_volume_from_snapshot(
+        self,
+        volume_spec: Dict[str, Any],
+        availability_zone: str,
+        instance_spec: Dict[str, Any],
+    ) -> str:
+        """Restore an EBS volume from a snapshot.
+
+        Args:
+            volume_spec: Volume specification containing snapshot_id
+            availability_zone: AZ where volume should be created
+            instance_spec: Instance specification for naming
+
+        Returns:
+            Volume ID of restored volume
+        """
+        snapshot_id = volume_spec["snapshot_id"]
+
+        # Verify snapshot exists and get its properties
+        try:
+            response = self.ec2_client.describe_snapshots(SnapshotIds=[snapshot_id])
+            snapshot = response["Snapshots"][0]
+
+            if snapshot["State"] != "completed":
+                raise ValueError(
+                    f"Snapshot {snapshot_id} is not completed. Current state: {snapshot['State']}"
+                )
+
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "InvalidSnapshot.NotFound":
+                raise ValueError(f"Snapshot {snapshot_id} not found")
+            else:
+                raise
+
+        volume_params = {
+            "SnapshotId": snapshot_id,
+            "AvailabilityZone": availability_zone,
+            "TagSpecifications": [
+                {
+                    "ResourceType": "volume",
+                    "Tags": [
+                        {
+                            "Key": "Name",
+                            "Value": (
+                                f"{instance_spec['name']}-{volume_spec.get('device', 'restored')}"
+                                f"-from-{snapshot_id}"
+                            ),
+                        },
+                        {"Key": "CreatedBy", "Value": "aws-automation-script"},
+                        {"Key": "RestoredFrom", "Value": snapshot_id},
+                        {
+                            "Key": "CreatedAt",
+                            "Value": datetime.now().isoformat(),
+                        },
+                    ],
+                }
+            ],
+        }
+
+        # Create volume from snapshot
+        response = self.ec2_client.create_volume(**volume_params)
+        volume_id = response["VolumeId"]
+
+        self.logger.info(f"Restored EBS volume {volume_id} from snapshot {snapshot_id}")
+        self.created_resources["volumes"].append(volume_id)
+
+        return volume_id
 
     def _create_idle_shutdown_alarm(
         self, instance_id: str, instance_spec: Dict[str, Any]
-    ) -> str:
+    ) -> Optional[str]:
         """Create CloudWatch alarm for idle shutdown detection.
 
         Args:
@@ -1508,6 +1644,80 @@ class AWSResourceManager:
             self.logger.error(f"Failed to list snapshots: {e}")
             raise
 
+    def create_snapshot(
+        self, volume_id: str, description: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create a snapshot from an EBS volume.
+
+        Args:
+            volume_id: ID of the EBS volume to snapshot
+            description: Optional description for the snapshot
+
+        Returns:
+            Dictionary containing snapshot information
+        """
+        try:
+            # Verify volume exists
+            response = self.ec2_client.describe_volumes(VolumeIds=[volume_id])
+            volume = response["Volumes"][0]
+
+            # Create default description if none provided
+            if not description:
+                volume_name = "unknown"
+                tags = volume.get("Tags", [])
+                for tag in tags:
+                    if tag["Key"] == "Name":
+                        volume_name = tag["Value"]
+                        break
+
+                description = (
+                    f"Snapshot of volume {volume_id} ({volume_name}) created on "
+                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+
+            # Create snapshot
+            snapshot_response = self.ec2_client.create_snapshot(
+                VolumeId=volume_id,
+                Description=description,
+                TagSpecifications=[
+                    {
+                        "ResourceType": "snapshot",
+                        "Tags": [
+                            {
+                                "Key": "Name",
+                                "Value": f"snapshot-{volume_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                            },
+                            {"Key": "CreatedBy", "Value": "aws-automation-script"},
+                            {"Key": "SourceVolume", "Value": volume_id},
+                            {"Key": "CreatedAt", "Value": datetime.now().isoformat()},
+                        ],
+                    }
+                ],
+            )
+
+            snapshot_id = snapshot_response["SnapshotId"]
+
+            self.logger.info(f"Created snapshot {snapshot_id} from volume {volume_id}")
+
+            return {
+                "snapshot_id": snapshot_id,
+                "volume_id": volume_id,
+                "description": description,
+                "state": snapshot_response["State"],
+                "start_time": snapshot_response["StartTime"].strftime(
+                    "%Y-%m-%d %H:%M:%S UTC"
+                ),
+                "volume_size": snapshot_response["VolumeSize"],
+                "encrypted": snapshot_response.get("Encrypted", False),
+            }
+
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "InvalidVolume.NotFound":
+                raise ValueError(f"Volume {volume_id} not found")
+            else:
+                self.logger.error(f"Failed to create snapshot: {e}")
+                raise
+
 
 def main():
     """Main function to handle command line arguments and execute the script."""
@@ -1525,10 +1735,11 @@ def main():
             "list-attached-volumes",
             "list-volumes",
             "list-snapshots",
+            "create-snapshot",
         ],
         help=(
             "Action to perform: create resources, delete resources, monitor user data execution, "
-            "monitor CloudWatch alarms, get connection info, or list resources"
+            "monitor CloudWatch alarms, get connection info, list resources, or create snapshots"
         ),
     )
     parser.add_argument(
@@ -1542,6 +1753,14 @@ def main():
     parser.add_argument(
         "--instance-name",
         help="EC2 instance name (required for list-attached-volumes action)",
+    )
+    parser.add_argument(
+        "--volume-id",
+        help="EBS volume ID (required for create-snapshot action)",
+    )
+    parser.add_argument(
+        "--description",
+        help="Description for the snapshot (optional for create-snapshot action)",
     )
     parser.add_argument(
         "--region", "-r", default="us-east-1", help="AWS region (default: us-east-1)"
@@ -1566,6 +1785,7 @@ def main():
         "connection-info",
     ]
     actions_requiring_instance_name = ["list-attached-volumes"]
+    actions_requiring_volume_id = ["create-snapshot"]
 
     if args.action in actions_requiring_spec and not args.spec:
         parser.error(f"--spec is required for action '{args.action}'")
@@ -1573,12 +1793,20 @@ def main():
     if args.action in actions_requiring_instance_name and not args.instance_name:
         parser.error(f"--instance-name is required for action '{args.action}'")
 
+    if args.action in actions_requiring_volume_id and not args.volume_id:
+        parser.error(f"--volume-id is required for action '{args.action}'")
+
     try:
         spec = None  # Initialize spec
         profile_to_use = args.profile
 
         # For resource listing commands, we don't need a spec file
-        if args.action in ["list-volumes", "list-snapshots", "list-attached-volumes"]:
+        if args.action in [
+            "list-volumes",
+            "list-snapshots",
+            "list-attached-volumes",
+            "create-snapshot",
+        ]:
             manager = AWSResourceManager(region=args.region, profile=profile_to_use)
         else:
             # Load specification first to check for profile in YAML
@@ -1597,6 +1825,7 @@ def main():
             "list-attached-volumes",
             "list-volumes",
             "list-snapshots",
+            "create-snapshot",
         ]:
             if spec is None:
                 print("Error: Specification required for dry-run mode")
@@ -1817,6 +2046,31 @@ def main():
             else:
                 print("No snapshots found.")
                 print("-" * 120)
+
+        elif args.action == "create-snapshot":
+            manager = AWSResourceManager(args.region, profile_to_use)
+
+            print(f"Creating snapshot from volume: {args.volume_id}")
+            if args.description:
+                print(f"Description: {args.description}")
+
+            snapshot_info = manager.create_snapshot(args.volume_id, args.description)
+
+            print(f"\n{'='*80}")
+            print("SNAPSHOT CREATED SUCCESSFULLY")
+            print(f"{'='*80}")
+            print(f"Snapshot ID: {snapshot_info['snapshot_id']}")
+            print(f"Volume ID: {snapshot_info['volume_id']}")
+            print(f"Description: {snapshot_info['description']}")
+            print(f"State: {snapshot_info['state']}")
+            print(f"Start Time: {snapshot_info['start_time']}")
+            print(f"Volume Size: {snapshot_info['volume_size']} GB")
+            print(f"Encrypted: {'Yes' if snapshot_info['encrypted'] else 'No'}")
+            print(f"{'='*80}")
+            print(
+                "\nNote: Snapshot creation is asynchronous and may take some time to complete."
+            )
+            print("Use 'python script.py list-snapshots' to check the snapshot status.")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
