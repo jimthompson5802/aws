@@ -15,7 +15,7 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
    - The script must accept a predefined specification in **YAML** format describing:
      - One or more EC2 instances: type, AMI, key pair, security groups, subnet, tags, etc.
      - Instance market type: support both **on-demand and spot instances**.
-     - Storage volumes: size, type, device mapping, IOPS, encrypted, etc.
+     - Storage volumes: size, type, device mapping, IOPS, encrypted, **mount point**, etc. ✅ **NEW: Mount Point Specification**
      - **User data script**: optional bash script path or inline script content for instance customization.
      - **Idle Shutdown Policy**: optional configuration to define a CloudWatch alarm that stops the EC2 instance if it is idle (e.g., low CPU utilization) for a pre-defined time period.  Do not shutdown the instance when the EC2 instance first starts up and is missing alert data.  Only shutdown the instance if there is sufficient alert data to determine that the instance is idle.
      - **IAM role**: optional IAM role to associate with the EC2 instance(s).
@@ -23,6 +23,7 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
 2. **Resource Provisioning** ✅ IMPLEMENTED
    - Create one or more EC2 instance(s) as per the specification.
    - Attach EBS volumes as specified.
+   - **Automatically format and mount EBS volumes** to specified mount points ✅ **NEW FEATURE**
    - Associate IAM role with the instance(s) if specified.
    - Tag resources appropriately.
    - **Execute user data script on instance startup** (if specified).
@@ -88,6 +89,13 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
 - **Enhanced YAML specification** with user data examples
 - **CloudWatch idle shutdown alarm support**: Example YAML and documentation for configuring idle shutdown alarms
 - **Connection information output functionality**: Enhanced output display of instance names, IDs, public IP addresses, and SSH commands ✅
+- **Storage Mount Point Specification** ✅ **NEW FEATURE ADDED**:
+  - Automatic volume formatting and mounting to specified directories
+  - Support for multiple filesystem types (ext4, xfs, btrfs)
+  - Persistent mounting via `/etc/fstab` configuration
+  - Mount point validation and verification
+  - Example YAML: `example_with_mount_points.yaml`
+  - Backward compatibility with existing volume specifications
 
 ## Open Questions
 - None (all clarified).

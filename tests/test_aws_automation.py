@@ -881,5 +881,207 @@ class TestIAMRoleInstanceCreation:
         assert instance_id == "i-1234567890abcdef1"
 
 
+class TestVolumeMountPoints:
+    """Test cases for the new mount point functionality."""
+
+    @pytest.fixture
+    def aws_manager(self):
+        """Create an AWSResourceManager instance with mocked AWS clients."""
+        with patch("boto3.Session") as mock_session:
+            mock_session.return_value.client.return_value = MagicMock()
+            mock_session.return_value.resource.return_value = MagicMock()
+            manager = AWSResourceManager(region="us-east-1")
+            return manager
+
+    def test_validate_volume_spec_with_mount_point(self, aws_manager):
+        """Test volume specification validation with mount points."""
+        # Valid volume spec with mount point
+        valid_volume = {
+            "size": 50,
+            "type": "gp3",
+            "device": "/dev/sdf",
+            "mount_point": "/data",
+            "filesystem": "ext4",
+            "mount_options": "defaults,noatime"
+        }
+        
+        # Should not raise any exception
+        aws_manager._validate_volume_spec(valid_volume, 0, 0)
+
+    def test_validate_volume_spec_invalid_mount_point(self, aws_manager):
+        """Test volume specification validation with invalid mount points."""
+        # Test non-absolute path
+        invalid_volume_relative = {
+            "size": 50,
+            "mount_point": "data"  # Should start with /
+        }
+        
+        with pytest.raises(ValueError, match="Mount point must be an absolute path"):
+            aws_manager._validate_volume_spec(invalid_volume_relative, 0, 0)
+
+        # Test dangerous system path
+        invalid_volume_system = {
+            "size": 50,
+            "mount_point": "/etc"  # Reserved system directory
+        }
+        
+        with pytest.raises(ValueError, match="is a reserved system directory"):
+            aws_manager._validate_volume_spec(invalid_volume_system, 0, 0)
+
+    def test_validate_volume_spec_invalid_filesystem(self, aws_manager):
+        """Test volume specification validation with invalid filesystem."""
+        invalid_volume = {
+            "size": 50,
+            "mount_point": "/data",
+            "filesystem": "invalid_fs"  # Not supported
+        }
+        
+        with pytest.raises(ValueError, match="Unsupported filesystem"):
+            aws_manager._validate_volume_spec(invalid_volume, 0, 0)
+
+    def test_generate_volume_mount_script_no_volumes(self, aws_manager):
+        """Test mount script generation with no volumes."""
+        instance_spec = {
+            "name": "test-instance"
+        }
+        
+        script = aws_manager._generate_volume_mount_script(instance_spec)
+        assert script == ""
+
+    def test_generate_volume_mount_script_no_mount_points(self, aws_manager):
+        """Test mount script generation with volumes but no mount points."""
+        instance_spec = {
+            "name": "test-instance",
+            "volumes": [
+                {
+                    "size": 50,
+                    "type": "gp3",
+                    "device": "/dev/sdf"
+                    # No mount_point specified
+                }
+            ]
+        }
+        
+        script = aws_manager._generate_volume_mount_script(instance_spec)
+        assert script == ""
+
+    def test_generate_volume_mount_script_with_mount_points(self, aws_manager):
+        """Test mount script generation with volumes having mount points."""
+        instance_spec = {
+            "name": "test-instance",
+            "volumes": [
+                {
+                    "size": 50,
+                    "type": "gp3",
+                    "device": "/dev/sdf",
+                    "mount_point": "/data",
+                    "filesystem": "ext4",
+                    "mount_options": "defaults,noatime"
+                },
+                {
+                    "size": 100,
+                    "type": "gp3",
+                    "device": "/dev/sdg",
+                    "mount_point": "/logs",
+                    "filesystem": "xfs"
+                }
+            ]
+        }
+        
+        script = aws_manager._generate_volume_mount_script(instance_spec)
+        
+        # Check that script contains mount commands
+        assert "AUTOMATIC VOLUME MOUNTING" in script
+        assert "wait_for_device" in script
+        assert "is_formatted" in script
+        assert "mkdir -p '/data'" in script
+        assert "mkdir -p '/logs'" in script
+        assert "mkfs.ext4 '/dev/sdf'" in script
+        assert "mkfs.xfs '/dev/sdg'" in script
+        assert "mount -o 'defaults,noatime' '/dev/sdf' '/data'" in script
+        assert "mount -o 'defaults' '/dev/sdg' '/logs'" in script
+        assert "/etc/fstab" in script
+        assert "chown ec2-user:ec2-user" in script
+
+    def test_prepare_user_data_with_mount_points(self, aws_manager):
+        """Test user data preparation with mount points."""
+        instance_spec = {
+            "name": "test-instance",
+            "volumes": [
+                {
+                    "size": 50,
+                    "device": "/dev/sdf",
+                    "mount_point": "/data",
+                    "filesystem": "ext4"
+                }
+            ],
+            "user_data": {
+                "inline_script": "echo 'Hello World'"
+            }
+        }
+        
+        user_data = aws_manager._prepare_user_data(instance_spec)
+        
+        # Check that user data contains mount commands before user script
+        assert "AUTOMATIC VOLUME MOUNTING" in user_data
+        assert "Volume mounting completed successfully" in user_data
+        assert "USER CUSTOM SCRIPT" in user_data
+        assert "echo 'Hello World'" in user_data
+        assert "MOUNT VERIFICATION" in user_data
+        assert "mountpoint -q '/data'" in user_data
+
+    def test_prepare_user_data_backward_compatibility(self, aws_manager):
+        """Test that volumes without mount points work as before."""
+        instance_spec = {
+            "name": "test-instance",
+            "volumes": [
+                {
+                    "size": 50,
+                    "device": "/dev/sdf"
+                    # No mount_point - should work as before
+                }
+            ],
+            "user_data": {
+                "inline_script": "echo 'Hello World'"
+            }
+        }
+        
+        user_data = aws_manager._prepare_user_data(instance_spec)
+        
+        # Should not contain mount commands
+        assert "AUTOMATIC VOLUME MOUNTING" not in user_data
+        assert "Volume mounting completed successfully" not in user_data
+        # But should contain user script
+        assert "USER CUSTOM SCRIPT" in user_data
+        assert "echo 'Hello World'" in user_data
+        # And no mount verification
+        assert "MOUNT VERIFICATION" not in user_data
+
+    def test_validate_specification_with_mount_points(self, aws_manager):
+        """Test full specification validation including mount points."""
+        spec_with_mount_points = {
+            "instances": [
+                {
+                    "name": "test-instance",
+                    "instance_type": "t3.micro",
+                    "ami_id": "ami-12345678",
+                    "volumes": [
+                        {
+                            "size": 50,
+                            "type": "gp3",
+                            "device": "/dev/sdf",
+                            "mount_point": "/data",
+                            "filesystem": "ext4",
+                            "mount_options": "defaults"
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        # Should not raise any exception
+        aws_manager._validate_specification(spec_with_mount_points)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

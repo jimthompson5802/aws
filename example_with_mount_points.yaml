@@ -1,0 +1,146 @@
+# Example YAML with Mount Point Specifications
+# This demonstrates the new automatic volume mounting functionality
+
+instances:
+  - name: "database-server"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"  # Amazon Linux 2 AMI
+    market_type: "on-demand"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-12345678"
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Role"
+        Value: "database"
+    user_data:
+      script_path: "examples/database_setup.sh"
+    volumes:
+      # Database data volume - high performance
+      - size: 200
+        type: "io2"
+        device: "/dev/sdf"
+        iops: 2000
+        mount_point: "/var/lib/mysql"      # Automatically mounted here
+        filesystem: "ext4"                 # Formatted with ext4
+        mount_options: "defaults,noatime"  # Optimized for database
+        encrypted: true
+      
+      # Database log volume - general purpose
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdg"
+        mount_point: "/var/log/mysql"      # Automatically mounted here
+        filesystem: "ext4"
+        encrypted: true
+      
+      # Backup volume - cost-effective storage
+      - size: 500
+        type: "st1"
+        device: "/dev/sdh"
+        mount_point: "/backup"             # Automatically mounted here
+        filesystem: "xfs"                  # Using XFS for large files
+        encrypted: true
+
+  - name: "web-server"
+    instance_type: "t3.small"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "on-demand"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-87654321"
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Role"
+        Value: "web"
+    user_data:
+      inline_script: |
+        #!/bin/bash
+        # Web server setup
+        yum update -y
+        yum install -y httpd
+        systemctl start httpd
+        systemctl enable httpd
+        
+        # Application data will be available at /app-data after mounting
+        echo "Setting up application in /app-data..."
+        mkdir -p /app-data/www
+        echo "<h1>Hello from $(hostname)</h1>" > /app-data/www/index.html
+        
+        # Configure Apache to serve from mounted volume
+        echo "DocumentRoot /app-data/www" >> /etc/httpd/conf/httpd.conf
+        systemctl restart httpd
+    volumes:
+      # Application data volume
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdf"
+        mount_point: "/app-data"           # App data stored here
+        filesystem: "ext4"
+        encrypted: true
+      
+      # Log volume for application logs
+      - size: 20
+        type: "gp3"
+        device: "/dev/sdg"
+        mount_point: "/var/log/app"        # Application logs here
+        filesystem: "ext4"
+        encrypted: false
+
+  - name: "data-science-workstation"
+    instance_type: "m5.xlarge"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "spot"
+    spot_price: "0.20"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-11223344"
+    tags:
+      - Key: "Environment"
+        Value: "development"
+      - Key: "Role"
+        Value: "data-science"
+    user_data:
+      script_path: "examples/data_science_setup.sh"
+    volumes:
+      # Datasets volume - large storage
+      - size: 1000
+        type: "sc1"
+        device: "/dev/sdf"
+        mount_point: "/datasets"           # Large datasets stored here
+        filesystem: "xfs"                  # XFS for large files
+        encrypted: true
+      
+      # Models and results volume - fast access
+      - size: 200
+        type: "gp3"
+        device: "/dev/sdg"
+        iops: 3000
+        mount_point: "/models"             # ML models and results
+        filesystem: "ext4"
+        encrypted: true
+      
+      # Jupyter notebooks and code
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdh"
+        mount_point: "/notebooks"          # Jupyter notebooks
+        filesystem: "ext4"
+        encrypted: true
+
+  - name: "legacy-server"
+    instance_type: "t3.micro"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "on-demand"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-55667788"
+    volumes:
+      # Volume without mount point - attached but not mounted (backward compatibility)
+      - size: 30
+        type: "gp3"
+        device: "/dev/sdf"
+        encrypted: true
+        # No mount_point specified - will be attached but not automatically mounted
