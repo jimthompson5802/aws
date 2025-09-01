@@ -60,6 +60,18 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
    - Monitor and retrieve user data script execution logs from instances.
    - Command: `python script.py monitor --spec specification.yaml`
 
+9. **Resource Listing Commands**  ✅ **IMPLEMENTED**
+   - The script must provide commands to list and inspect AWS resources:
+     - **List attached volumes for an EC2 instance by name**:  
+       - Command: `python script.py list-attached-volumes --instance-name <name> [--profile <profile>]`
+       - Output: List of EBS volumes attached to the running EC2 instance with the specified name, including device mapping and volume details.
+     - **List all EBS volumes and their status**:  
+       - Command: `python script.py list-volumes [--profile <profile>]`
+       - Output: Table of all EBS volumes, their status (e.g., available, in-use), and if in-use, the name of the EC2 instance they are attached to (as specified by the user in the YAML spec or instance tags).
+     - **List all EBS snapshots**:  
+       - Command: `python script.py list-snapshots [--profile <profile>]`
+       - Output: List of all EBS snapshots, including snapshot ID, description, creation time, and associated volume ID.
+
 ### Non-Functional Requirements
 - Use boto3 (AWS SDK for Python).
 - Script should be runnable from the command line.
@@ -77,8 +89,6 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
 - Example YAML input specification file ✅
 - **Example bash scripts for common customization scenarios** ✅
 - Documentation (README) ✅
-
-### New Deliverables Added
 - **User data script examples in `/examples/` directory**:
   - `python_web_server.sh` - Complete Python Flask web server setup
   - `data_science_setup.sh` - Jupyter Lab and data science environment
@@ -96,6 +106,11 @@ Manual setup of compute and storage resources in AWS is time-consuming and error
   - Mount point validation and verification
   - Example YAML: `example_with_mount_points.yaml`
   - Backward compatibility with existing volume specifications
+- **Resource listing commands**:
+  - List attached volumes for a given EC2 instance by name
+  - List all EBS volumes and their status, including attached instance name
+  - List all EBS snapshots
+  - Example usage in documentation
 
 ## Open Questions
 - None (all clarified).
