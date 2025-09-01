@@ -154,8 +154,8 @@ flowchart LR
             direction TB
             EC2GPU[EC2 Instance: gpu-instance<br/>VSCode Remote]
             EBS2R[(EBS Root Volume: <br/>  Mount: /)]
-            EBS2C[(EBS Code Volume: <br/> 20G <br/> Mount: ~/code)]
-            EBS2D[(EBS Data Volume: <br/> 50G <br/> Mount: ~/data)]
+            EBS2C[(EBS Code Volume: <br/> Mount: ~/code)]
+            EBS2D[(EBS Data Volume: <br/> Mount: ~/data)]
             EC2GPU <--> EBS2R
             EC2GPU <--> EBS2C
             EC2GPU <--> EBS2D
@@ -212,3 +212,134 @@ python script.py --spec setup/gpu_setup.yaml --profile ec2-user delete
 2025-08-31 08:36:50,049 - INFO - Resource deletion completed
 Successfully deleted resources
 ```
+
+### Enhancement for EBS Snapshots
+
+#### High-Level Overview
+```mermaid
+flowchart LR
+    MacBook([MacBook<br/>VSCode Local])
+    subgraph AWS
+        direction TB
+        subgraph CPU-Compute
+            direction TB
+            EC2CPU[EC2 Instance: cpu-instance<br/>VSCode Remote]
+            EBSRoot[(EBS Root Volume  <br/> Mount: /)]
+            EBSCode[(EBS Code Volume <br/> Mount: ~/code)]
+            EBSData[(EBS Data Volume <br/> Mount: ~/data)]
+            EC2CPU <--> EBSRoot
+            EC2CPU <--> EBSCode
+            EC2CPU <--> EBSData
+        end
+        subgraph GPU-Compute
+            direction TB
+            EC2GPU[EC2 Instance: gpu-instance<br/>VSCode Remote]
+            EBS2Root[(EBS Root Volume: <br/> Mount: /)]
+            EBS2Code[(EBS Code Volume: <br/> Mount: ~/code)]
+            EBS2Data[(EBS Data Volume: <br/> Mount: ~/data)]
+            EC2GPU <--> EBS2Root
+            EC2GPU <--> EBS2Code
+            EC2GPU <--> EBS2Data
+        end
+
+        EBS-Snapshot[(EBS Snapshot Repository)]
+        CPU-Compute -- Snapshot EBS Volume <--> EBS-Snapshot
+        GPU-Compute -- Snapshot EBS Volume <--> EBS-Snapshot
+
+    end
+
+    MacBook -- SSH/VSCode <--> AWS
+    AWS -- Git Clone/Pull/Push <--> Github((Cloud<br/>GitHub))
+```
+
+#### Example YAML Restoring Volume From a Snapshot
+
+```yaml
+instances:
+  - name: "gpu-instance"
+    instance_type: "g6.2xlarge" #"t3.xlarge"
+    ami_id: "ami-09ddf6b7d718bc247"  # deep learning
+    market_type: "on-demand"
+    key_name: "MY-KEY-PAIR"  # Optional: EC2 Key Pair name
+    security_groups:  # Optional: Security Group IDs
+      - "sg-SECURITY-GROUP-ID"
+    subnet_id: "subnet-SECURITY-SUBNET-ID"  # Optional: Subnet ID
+    iam_role: "MY-IAM-ROLE"  # although optional, needed to access SSM parameters
+    user_data:
+      inline_script: |
+        #!/bin/bash
+
+        echo "starting server setup"
+
+        # update system sofware
+        yum update -y
+        yum install --allowerasing -y  htop curl wget gnupg2 pinentry
+
+        sudo -iu ec2-user bash << EOF
+            echo "user specific configuration..."
+            repo_name="gpu_testbed"
+            base_dir=~/code
+            repo_dir=\${base_dir}/\${repo_name}
+            git_user="Jim Thompson"
+            git_email="MY-EMAIL"
+
+            # Configure GPG
+            echo "Configuring GPG..."
+            mkdir -p ~/.gnupg
+            chmod 700 ~/.gnupg
+            echo "use-agent" >> ~/.gnupg/gpg.conf
+            echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+
+            # get gpg keys and key id from AWS SSM Parameter Store
+            aws ssm get-parameter --name "/PARAMETER/GPG_SECRET_KEY" --with-decryption --query "Parameter.Value" --output text | gpg --import
+
+            aws ssm get-parameter --name "/PARAMETER/GITHUB_GPG_PUBLIC_KEY" --with-decryption --query "Parameter.Value" --output text | gpg --import
+
+            GPG_KEY_ID=$(aws ssm get-parameter --name "/PARAMETER/GITHUB_GPG_KEY_ID" --with-decryption --query "Parameter.Value" --output text)
+
+            # Start gpg-agent
+            gpg-agent --daemon --default-cache-ttl 3600
+
+
+            echo "Checking if repository \${repo_dir} exists..."
+            if [ ! -d "\${repo_dir}" ]; then
+                echo "Cloning repository in \${repo_dir}"
+                cd \${base_dir}
+                git clone "http://github.com/jimthompson5802/\${repo_name}.git"
+                cd \${repo_dir}
+                echo "Setting git user configuration for \${git_user} with \${git_email}"
+                git config user.name "\${git_user}"
+                git config user.email "\${git_email}"
+                git config user.signingkey "\${GPG_KEY_ID}"
+                git config commit.gpgsign true
+                git config tag.gpgsign true
+            else
+                echo "\${repo_dir} already exists, skipping clone"
+            fi
+        EOF
+
+        echo "Server setup complete"
+
+    # CloudWatch idle shutdown configuration
+    idle_shutdown:
+      cpu_threshold: 5.0          # Stop when CPU < 5% 
+      evaluation_minutes: 30       # For 30 minutes continuously
+      action: "terminate"               # Action: "stop" or "terminate"
+    tags:  # Optional: Custom tags
+      - Key: "Environment"
+        Value: "testing"
+    volumes:  # Optional: Additional EBS volumes
+      - snapshot_id: "snap-SNAPSHOT-ID"  # Restoring from this snapshot
+        device: "/dev/sdf"
+        mount_point: "/home/ec2-user/code"
+        mount_options: "defaults,noatime"
+        # Note: size, type, encryption, and filesystem inherited from snapshot
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdg"
+        mount_point: "/home/ec2-user/data"      # Automatically mounted here
+        filesystem: "ext4"                 # Formatted with ext4
+        mount_options: "defaults,noatime"  # Optimized for database
+        encrypted: true
+```
+
