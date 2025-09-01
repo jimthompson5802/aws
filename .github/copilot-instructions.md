@@ -20,6 +20,7 @@ This repository automates the provisioning and management of AWS EC2 instances a
 - All public functions and classes must have docstrings.
 - Update `README.md` and example YAML files for any new features or changes.
 - Document new user data scripts in `examples/README.md`.
+- after implementing a new feature, update the `changes/CHANGELOG.md` file with a summary of changes.
 
 ## Security
 
@@ -40,6 +41,7 @@ This repository automates the provisioning and management of AWS EC2 instances a
 
 ## Testing
 
+- Activate the virtual environment for testing `source venv/bin/activate`
 - Add/modify tests in `tests/test_aws_automation.py`.
 - Use mock AWS services for unit tests (e.g., `moto` library).
 

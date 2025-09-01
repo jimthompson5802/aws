@@ -55,6 +55,23 @@ python script.py monitor-alarms --spec example.yaml --region us-east-1
 python script.py connection-info --spec example.yaml --region us-east-1
 ```
 
+### Resource Listing Commands
+
+#### List Attached Volumes for an Instance
+```bash
+python script.py list-attached-volumes --instance-name web-server-1 --region us-east-1
+```
+
+#### List All EBS Volumes
+```bash
+python script.py list-volumes --region us-east-1
+```
+
+#### List All EBS Snapshots
+```bash
+python script.py list-snapshots --region us-east-1
+```
+
 ### Using AWS Profiles
 ```bash
 # Use a specific AWS profile
@@ -552,6 +569,101 @@ This ensures you don't have orphaned resources in case of failures.
 ## Idempotency
 
 The script checks for existing resources before creating new ones. If instances with the same name (tag) already exist, the script will skip creation and report the existing resources.
+
+## Resource Listing and Inspection
+
+The script provides powerful commands to list and inspect AWS resources without requiring a specification file. These commands are useful for:
+
+- **Resource Discovery**: Finding existing resources in your AWS account
+- **Capacity Planning**: Understanding current volume usage and attachment status
+- **Backup Management**: Tracking EBS snapshots and their metadata
+- **Debugging**: Identifying resource relationships and states
+
+### List Attached Volumes for a Specific Instance
+
+View all EBS volumes attached to a specific EC2 instance by name:
+
+```bash
+python script.py list-attached-volumes --instance-name web-server-1 --region us-east-1
+```
+
+**Example Output:**
+```
+================================================================================
+VOLUMES ATTACHED TO INSTANCE: web-server-1
+================================================================================
+Volume ID: vol-1234567890abcdef0
+Device: /dev/sda1
+Size: 30 GB
+Type: gp3
+State: in-use
+Encrypted: Yes
+IOPS: 3000
+Throughput: 125 MB/s
+Created: 2025-09-01 10:00:00 UTC
+--------------------------------------------------------------------------------
+Volume ID: vol-0987654321fedcba0
+Device: /dev/sdf
+Size: 100 GB
+Type: gp2
+State: in-use
+Encrypted: No
+IOPS: 300
+Created: 2025-09-01 10:05:00 UTC
+--------------------------------------------------------------------------------
+```
+
+### List All EBS Volumes
+
+Get a comprehensive table view of all EBS volumes in your account:
+
+```bash
+python script.py list-volumes --region us-east-1 --profile my-profile
+```
+
+**Example Output:**
+```
+====================================================================================================
+ALL EBS VOLUMES
+====================================================================================================
+Volume ID              Size   Type   State        Encrypted  Instance            Instance Name        Device      
+----------------------------------------------------------------------------------------------------
+vol-1234567890abcdef0  30     gp3    in-use       Yes        i-123...f0          web-server-1         /dev/sda1   
+vol-0987654321fedcba0  100    gp2    in-use       No         i-987...a0          db-server-1          /dev/sdf    
+vol-5555666677778888   50     gp3    available    Yes        N/A                 N/A                  N/A         
+----------------------------------------------------------------------------------------------------
+Total volumes: 3
+```
+
+### List All EBS Snapshots
+
+View all snapshots owned by your account, sorted by creation time:
+
+```bash
+python script.py list-snapshots --region us-east-1
+```
+
+**Example Output:**
+```
+========================================================================================================================
+ALL EBS SNAPSHOTS
+========================================================================================================================
+Snapshot ID            Name                      Volume ID              Size   State        Progress   Start Time           Encrypted  
+------------------------------------------------------------------------------------------------------------------------
+snap-0987654321fedcba0 backup-2025-09-01         vol-1234567890abcdef0  30     completed    100%       2025-09-01 14:00:00  Yes        
+snap-1234567890abcdef0 daily-backup              vol-0987654321fedcba0  100    completed    100%       2025-09-01 13:00:00  No         
+snap-5555666677778888  N/A                       vol-5555666677778888   50     pending      75%        2025-09-01 15:00:00  Yes        
+------------------------------------------------------------------------------------------------------------------------
+Total snapshots: 3
+```
+
+### Use Cases
+
+1. **Resource Audit**: Quickly identify unattached volumes that may be incurring costs
+2. **Instance Management**: View all volumes attached to a specific instance before maintenance
+3. **Backup Verification**: Ensure snapshots are being created successfully
+4. **Cost Optimization**: Identify unused volumes and incomplete snapshots
+5. **Troubleshooting**: Debug storage-related issues by examining volume states and attachments
 
 ## Troubleshooting
 

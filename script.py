@@ -782,7 +782,10 @@ class AWSResourceManager:
         action = idle_config.get("action", "stop")  # Default to stop
 
         alarm_name = f"idle-shutdown-{instance_name}-{instance_id}"
-        alarm_description = f"Idle shutdown alarm for {instance_name} - {action} instance when CPU < {cpu_threshold}% for {evaluation_minutes} minutes"
+        alarm_description = (
+            f"Idle shutdown alarm for {instance_name} - {action} "
+            f"instance when CPU < {cpu_threshold}% for {evaluation_minutes} minutes"
+        )
 
         try:
             # Check if alarm already exists (for idempotency)
@@ -1032,7 +1035,8 @@ class AWSResourceManager:
             except ClientError as e:
                 self.logger.error(f"Failed to terminate instances: {e}")
 
-        # Delete volumes (they should be automatically deleted when instances are terminated if DeleteOnTermination is True)
+        # Delete volumes (they should be automatically deleted when instances are
+        # terminated if DeleteOnTermination is True)
         self.logger.info("Resource deletion completed")
 
     def get_user_data_logs(self, instance_id: str) -> str:
@@ -1312,6 +1316,198 @@ class AWSResourceManager:
 
         return all_connection_info
 
+    def list_attached_volumes(self, instance_name: str) -> List[Dict[str, Any]]:
+        """List all EBS volumes attached to a specific EC2 instance by name.
+
+        Args:
+            instance_name: Name of the EC2 instance
+
+        Returns:
+            List of attached volume information dictionaries
+        """
+        try:
+            # Find the instance by name tag
+            response = self.ec2_client.describe_instances(
+                Filters=[
+                    {"Name": "tag:Name", "Values": [instance_name]},
+                    {
+                        "Name": "instance-state-name",
+                        "Values": ["running", "pending", "stopped", "stopping"],
+                    },
+                ]
+            )
+
+            attached_volumes = []
+
+            for reservation in response["Reservations"]:
+                for instance in reservation["Instances"]:
+                    instance_id = instance["InstanceId"]
+
+                    # Get all block device mappings for this instance
+                    for block_device in instance.get("BlockDeviceMappings", []):
+                        ebs = block_device.get("Ebs", {})
+                        volume_id = ebs.get("VolumeId")
+
+                        if volume_id:
+                            # Get detailed volume information
+                            volume_response = self.ec2_client.describe_volumes(
+                                VolumeIds=[volume_id]
+                            )
+
+                            for volume in volume_response["Volumes"]:
+                                volume_info = {
+                                    "volume_id": volume["VolumeId"],
+                                    "device": block_device["DeviceName"],
+                                    "size": volume["Size"],
+                                    "volume_type": volume["VolumeType"],
+                                    "state": volume["State"],
+                                    "encrypted": volume.get("Encrypted", False),
+                                    "iops": volume.get("Iops", "N/A"),
+                                    "creation_time": volume["CreateTime"].strftime(
+                                        "%Y-%m-%d %H:%M:%S UTC"
+                                    ),
+                                    "instance_id": instance_id,
+                                    "instance_name": instance_name,
+                                }
+
+                                # Add throughput for GP3 volumes
+                                if volume["VolumeType"] == "gp3":
+                                    volume_info["throughput"] = volume.get(
+                                        "Throughput", "N/A"
+                                    )
+
+                                attached_volumes.append(volume_info)
+
+            if not attached_volumes:
+                self.logger.warning(
+                    f"No volumes found attached to instance: {instance_name}"
+                )
+
+            return attached_volumes
+
+        except ClientError as e:
+            self.logger.error(
+                f"Failed to list volumes for instance {instance_name}: {e}"
+            )
+            raise
+
+    def list_all_volumes(self) -> List[Dict[str, Any]]:
+        """List all EBS volumes and their status.
+
+        Returns:
+            List of all volume information dictionaries
+        """
+        try:
+            # Get all volumes
+            response = self.ec2_client.describe_volumes()
+
+            all_volumes = []
+
+            for volume in response["Volumes"]:
+                volume_info = {
+                    "volume_id": volume["VolumeId"],
+                    "size": volume["Size"],
+                    "volume_type": volume["VolumeType"],
+                    "state": volume["State"],
+                    "encrypted": volume.get("Encrypted", False),
+                    "iops": volume.get("Iops", "N/A"),
+                    "creation_time": volume["CreateTime"].strftime(
+                        "%Y-%m-%d %H:%M:%S UTC"
+                    ),
+                    "attached_instance": "N/A",
+                    "attached_instance_name": "N/A",
+                    "device": "N/A",
+                }
+
+                # Add throughput for GP3 volumes
+                if volume["VolumeType"] == "gp3":
+                    volume_info["throughput"] = volume.get("Throughput", "N/A")
+
+                # Check if volume is attached to an instance
+                attachments = volume.get("Attachments", [])
+                if attachments:
+                    attachment = attachments[
+                        0
+                    ]  # A volume can only be attached to one instance
+                    instance_id = attachment["InstanceId"]
+                    volume_info["attached_instance"] = instance_id
+                    volume_info["device"] = attachment["Device"]
+                    volume_info["state"] = attachment["State"]
+
+                    # Try to get the instance name from tags
+                    try:
+                        instance_response = self.ec2_client.describe_instances(
+                            InstanceIds=[instance_id]
+                        )
+
+                        for reservation in instance_response["Reservations"]:
+                            for instance in reservation["Instances"]:
+                                tags = instance.get("Tags", [])
+                                for tag in tags:
+                                    if tag["Key"] == "Name":
+                                        volume_info["attached_instance_name"] = tag[
+                                            "Value"
+                                        ]
+                                        break
+
+                    except ClientError:
+                        # Instance might not exist anymore
+                        volume_info["attached_instance_name"] = "Unknown/Deleted"
+
+                all_volumes.append(volume_info)
+
+            return all_volumes
+
+        except ClientError as e:
+            self.logger.error(f"Failed to list volumes: {e}")
+            raise
+
+    def list_all_snapshots(self) -> List[Dict[str, Any]]:
+        """List all EBS snapshots owned by the current account.
+
+        Returns:
+            List of snapshot information dictionaries
+        """
+        try:
+            # Get all snapshots owned by this account
+            response = self.ec2_client.describe_snapshots(OwnerIds=["self"])
+
+            all_snapshots = []
+
+            for snapshot in response["Snapshots"]:
+                snapshot_info = {
+                    "snapshot_id": snapshot["SnapshotId"],
+                    "description": snapshot.get("Description", "N/A"),
+                    "volume_id": snapshot.get("VolumeId", "N/A"),
+                    "volume_size": snapshot["VolumeSize"],
+                    "state": snapshot["State"],
+                    "progress": snapshot.get("Progress", "N/A"),
+                    "start_time": snapshot["StartTime"].strftime(
+                        "%Y-%m-%d %H:%M:%S UTC"
+                    ),
+                    "encrypted": snapshot.get("Encrypted", False),
+                }
+
+                # Get tags if any
+                tags = snapshot.get("Tags", [])
+                for tag in tags:
+                    if tag["Key"] == "Name":
+                        snapshot_info["name"] = tag["Value"]
+                        break
+                else:
+                    snapshot_info["name"] = "N/A"
+
+                all_snapshots.append(snapshot_info)
+
+            # Sort by start time (newest first)
+            all_snapshots.sort(key=lambda x: x["start_time"], reverse=True)
+
+            return all_snapshots
+
+        except ClientError as e:
+            self.logger.error(f"Failed to list snapshots: {e}")
+            raise
+
 
 def main():
     """Main function to handle command line arguments and execute the script."""
@@ -1320,11 +1516,32 @@ def main():
     )
     parser.add_argument(
         "action",
-        choices=["create", "delete", "monitor", "monitor-alarms", "connection-info"],
-        help="Action to perform: create resources, delete resources, monitor user data execution, monitor CloudWatch alarms, or get connection info",
+        choices=[
+            "create",
+            "delete",
+            "monitor",
+            "monitor-alarms",
+            "connection-info",
+            "list-attached-volumes",
+            "list-volumes",
+            "list-snapshots",
+        ],
+        help=(
+            "Action to perform: create resources, delete resources, monitor user data execution, "
+            "monitor CloudWatch alarms, get connection info, or list resources"
+        ),
     )
     parser.add_argument(
-        "--spec", "-s", required=True, help="Path to YAML specification file"
+        "--spec",
+        "-s",
+        help=(
+            "Path to YAML specification file (required for create, delete, monitor, "
+            "monitor-alarms, connection-info actions)"
+        ),
+    )
+    parser.add_argument(
+        "--instance-name",
+        help="EC2 instance name (required for list-attached-volumes action)",
     )
     parser.add_argument(
         "--region", "-r", default="us-east-1", help="AWS region (default: us-east-1)"
@@ -1340,22 +1557,50 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate required arguments for different actions
+    actions_requiring_spec = [
+        "create",
+        "delete",
+        "monitor",
+        "monitor-alarms",
+        "connection-info",
+    ]
+    actions_requiring_instance_name = ["list-attached-volumes"]
+
+    if args.action in actions_requiring_spec and not args.spec:
+        parser.error(f"--spec is required for action '{args.action}'")
+
+    if args.action in actions_requiring_instance_name and not args.instance_name:
+        parser.error(f"--instance-name is required for action '{args.action}'")
+
     try:
-        # Load specification first to check for profile in YAML
-        with open(args.spec, "r") as f:
-            spec = yaml.safe_load(f)
+        spec = None  # Initialize spec
+        profile_to_use = args.profile
 
-        # Determine which profile to use (command line takes precedence over YAML)
-        profile_to_use = args.profile or spec.get("profile")
+        # For resource listing commands, we don't need a spec file
+        if args.action in ["list-volumes", "list-snapshots", "list-attached-volumes"]:
+            manager = AWSResourceManager(region=args.region, profile=profile_to_use)
+        else:
+            # Load specification first to check for profile in YAML
+            with open(args.spec, "r") as f:
+                spec = yaml.safe_load(f)
 
-        manager = AWSResourceManager(region=args.region, profile=profile_to_use)
-        spec = manager.load_specification(args.spec)
+            # Determine which profile to use (command line takes precedence over YAML)
+            profile_to_use = args.profile or spec.get("profile")
+            manager = AWSResourceManager(region=args.region, profile=profile_to_use)
+            spec = manager.load_specification(args.spec)
 
         if args.dry_run and args.action not in [
             "monitor",
             "monitor-alarms",
             "connection-info",
+            "list-attached-volumes",
+            "list-volumes",
+            "list-snapshots",
         ]:
+            if spec is None:
+                print("Error: Specification required for dry-run mode")
+                return
             print(f"DRY RUN: Would {args.action} resources according to specification:")
             if profile_to_use:
                 print(f"Using AWS profile: {profile_to_use}")
@@ -1365,6 +1610,9 @@ def main():
             return
 
         if args.action == "create":
+            if spec is None:
+                print("Error: Specification required for create action")
+                return
             resources = manager.provision_resources(spec)
             print(f"Successfully created resources: {resources}")
 
@@ -1408,10 +1656,16 @@ def main():
                 print(monitor_alarm_cmd)
 
         elif args.action == "delete":
+            if spec is None:
+                print("Error: Specification required for delete action")
+                return
             manager.delete_resources(spec)
             print("Successfully deleted resources")
 
         elif args.action == "monitor":
+            if spec is None:
+                print("Error: Specification required for monitor action")
+                return
             logs = manager.monitor_user_data_execution(spec)
             print("\nUser Data Execution Logs:")
             print("=" * 50)
@@ -1422,6 +1676,9 @@ def main():
                 print("-" * 30)
 
         elif args.action == "monitor-alarms":
+            if spec is None:
+                print("Error: Specification required for monitor-alarms action")
+                return
             alarm_states = manager.get_cloudwatch_alarms(spec)
             print("\nCloudWatch Idle Shutdown Alarms:")
             print("=" * 50)
@@ -1431,6 +1688,9 @@ def main():
                 print("-" * 30)
 
         elif args.action == "connection-info":
+            if spec is None:
+                print("Error: Specification required for connection-info action")
+                return
             connection_info = manager.get_connection_info_by_spec(spec)
             print("\n" + "=" * 60)
             print("INSTANCE CONNECTION INFORMATION")
@@ -1452,6 +1712,111 @@ def main():
             else:
                 print("No instances found matching the specification.")
                 print("-" * 60)
+
+        elif args.action == "list-attached-volumes":
+            volumes = manager.list_attached_volumes(args.instance_name)
+            print(f"\n{'='*80}")
+            print(f"VOLUMES ATTACHED TO INSTANCE: {args.instance_name}")
+            print(f"{'='*80}")
+            if volumes:
+                for volume in volumes:
+                    print(f"Volume ID: {volume['volume_id']}")
+                    print(f"Device: {volume['device']}")
+                    print(f"Size: {volume['size']} GB")
+                    print(f"Type: {volume['volume_type']}")
+                    print(f"State: {volume['state']}")
+                    print(f"Encrypted: {volume['encrypted']}")
+                    print(f"IOPS: {volume['iops']}")
+                    if volume["volume_type"] == "gp3":
+                        print(f"Throughput: {volume.get('throughput', 'N/A')} MB/s")
+                    print(f"Created: {volume['creation_time']}")
+                    print("-" * 80)
+            else:
+                print(f"No volumes found attached to instance: {args.instance_name}")
+                print("-" * 80)
+
+        elif args.action == "list-volumes":
+            volumes = manager.list_all_volumes()
+            print(f"\n{'='*100}")
+            print("ALL EBS VOLUMES")
+            print(f"{'='*100}")
+            if volumes:
+                # Print header
+                header = (
+                    f"{'Volume ID':<22} {'Size':<6} {'Type':<6} {'State':<12} "
+                    f"{'Encrypted':<10} {'Instance':<19} {'Instance Name':<20} {'Device':<12}"
+                )
+                print(header)
+                print("-" * 100)
+
+                for volume in volumes:
+                    encrypted = "Yes" if volume["encrypted"] else "No"
+                    instance_id = volume["attached_instance"]
+                    if instance_id != "N/A":
+                        instance_id = instance_id[
+                            -8:
+                        ]  # Show last 8 chars of instance ID
+
+                    instance_name = volume["attached_instance_name"]
+                    if len(instance_name) > 18:
+                        instance_name = instance_name[:15] + "..."
+
+                    device = volume["device"]
+                    if len(device) > 10:
+                        device = device[:7] + "..."
+
+                    row = (
+                        f"{volume['volume_id']:<22} {volume['size']:<6} "
+                        f"{volume['volume_type']:<6} {volume['state']:<12} "
+                        f"{encrypted:<10} {instance_id:<19} "
+                        f"{instance_name:<20} {device:<12}"
+                    )
+                    print(row)
+
+                print("-" * 100)
+                print(f"Total volumes: {len(volumes)}")
+            else:
+                print("No volumes found.")
+                print("-" * 100)
+
+        elif args.action == "list-snapshots":
+            snapshots = manager.list_all_snapshots()
+            print(f"\n{'='*120}")
+            print("ALL EBS SNAPSHOTS")
+            print(f"{'='*120}")
+            if snapshots:
+                # Print header
+                header = (
+                    f"{'Snapshot ID':<22} {'Name':<25} {'Volume ID':<22} "
+                    f"{'Size':<6} {'State':<12} {'Progress':<10} "
+                    f"{'Start Time':<20} {'Encrypted':<10}"
+                )
+                print(header)
+                print("-" * 120)
+
+                for snapshot in snapshots:
+                    encrypted = "Yes" if snapshot["encrypted"] else "No"
+                    name = snapshot["name"]
+                    if len(name) > 23:
+                        name = name[:20] + "..."
+
+                    progress = snapshot["progress"]
+                    if progress != "N/A" and len(progress) > 8:
+                        progress = progress[:8]
+
+                    row = (
+                        f"{snapshot['snapshot_id']:<22} {name:<25} "
+                        f"{snapshot['volume_id']:<22} {snapshot['volume_size']:<6} "
+                        f"{snapshot['state']:<12} {progress:<10} "
+                        f"{snapshot['start_time']:<20} {encrypted:<10}"
+                    )
+                    print(row)
+
+                print("-" * 120)
+                print(f"Total snapshots: {len(snapshots)}")
+            else:
+                print("No snapshots found.")
+                print("-" * 120)
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
