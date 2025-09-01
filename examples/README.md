@@ -94,6 +94,7 @@ This directory contains both user data scripts and YAML specification examples f
 ### Advanced Features
 - **`example_with_idle_shutdown.yaml`**: CloudWatch-based auto-shutdown for cost optimization
 - **`example_with_mount_points.yaml`**: Automatic EBS volume mounting configuration
+- **`example_with_snapshots.yaml`**: EBS snapshot restoration and backup workflows
 
 ## Usage Examples
 
@@ -163,6 +164,114 @@ instances:
         encrypted: true
 ```
 
+### EBS Snapshot Restoration
+```yaml
+instances:
+  - name: "restored-database-server"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"
+    volumes:
+      # Create new volume
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdf"
+        mount_point: "/var/log/mysql"
+        filesystem: "ext4"
+        encrypted: true
+      
+      # Restore from snapshot
+      - snapshot_id: "snap-1234567890abcdef0"
+        device: "/dev/sdg"
+        mount_point: "/var/lib/mysql"
+        mount_options: "defaults,noatime"
+        # Note: size, type, encryption, filesystem inherited from snapshot
+```
+
+## EBS Snapshot Support
+
+The AWS automation script supports comprehensive EBS snapshot management, enabling backup and restore workflows for your storage volumes.
+
+### Volume Specification Methods
+
+You can specify storage volumes using two methods:
+
+#### Method 1: Create New Volume
+```yaml
+volumes:
+  - size: 100                    # Required: Volume size in GB
+    type: "gp3"                  # Required: Volume type
+    device: "/dev/sdf"           # Required: Device identifier
+    mount_point: "/data"         # Optional: Auto-mount location
+    filesystem: "ext4"           # Optional: Filesystem type
+    mount_options: "defaults"    # Optional: Mount options
+    iops: 3000                   # Optional: IOPS for supported types
+    encrypted: true              # Optional: Enable encryption
+```
+
+#### Method 2: Restore from Snapshot
+```yaml
+volumes:
+  - snapshot_id: "snap-1234567890abcdef0"  # Required: EBS snapshot ID
+    device: "/dev/sdg"                     # Required: Device identifier  
+    mount_point: "/restored-data"          # Optional: Auto-mount location
+    mount_options: "defaults,noatime"      # Optional: Mount options
+    # Note: size, type, encryption, and filesystem inherited from snapshot
+```
+
+### Creating Snapshots
+
+Create snapshots from existing EBS volumes using the command line:
+
+```bash
+# Create snapshot with custom description
+python script.py create-snapshot --volume-id vol-1234567890abcdef0 \
+  --description "Production database backup"
+
+# Create snapshot with auto-generated description
+python script.py create-snapshot --volume-id vol-1234567890abcdef0
+
+# Create snapshot using specific AWS profile
+python script.py create-snapshot --volume-id vol-1234567890abcdef0 --profile production
+
+# List all snapshots
+python script.py list-snapshots
+```
+
+### Snapshot Workflow Examples
+
+#### Backup and Recovery Workflow
+```bash
+# 1. Create snapshot from production volume
+python script.py create-snapshot --volume-id vol-prod-database \
+  --description "Daily backup $(date +%Y-%m-%d)"
+
+# 2. Get snapshot ID from output or listing
+python script.py list-snapshots
+
+# 3. Use snapshot in disaster recovery YAML
+# volumes:
+#   - snapshot_id: "snap-backup-123"
+#     device: "/dev/sdf"
+#     mount_point: "/var/lib/mysql"
+
+# 4. Deploy recovery instance
+python script.py create --spec disaster_recovery.yaml
+```
+
+#### Development Environment Cloning
+```bash
+# Clone production data for development/testing
+python script.py create --spec examples/example_with_snapshots.yaml
+```
+
+### Snapshot Use Cases
+
+- **Disaster Recovery**: Restore production databases from snapshots
+- **Development Cloning**: Create development environments with production data
+- **Data Migration**: Move data between instances using snapshots
+- **Backup Automation**: Create regular backups of critical volumes
+- **Testing**: Create test environments with consistent data sets
+
 ## Available Example Files
 
 The following YAML files demonstrate different configuration patterns:
@@ -176,6 +285,7 @@ The following YAML files demonstrate different configuration patterns:
 | `example_with_iam_role.yaml` | IAM instance profile assignment |
 | `example_with_idle_shutdown.yaml` | CloudWatch idle shutdown configuration |
 | `example_with_mount_points.yaml` | Automatic EBS volume mounting |
+| `example_with_snapshots.yaml` | EBS snapshot restoration and backup workflows |
 
 ## Quick Start
 

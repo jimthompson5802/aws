@@ -1,0 +1,112 @@
+# Example YAML with Snapshot Restoration
+# This demonstrates the new snapshot restoration functionality
+
+instances:
+  - name: "restored-database-server"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"  # Amazon Linux 2 AMI
+    market_type: "on-demand"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-12345678"
+    tags:
+      - Key: "Environment"
+        Value: "production"
+      - Key: "Role"
+        Value: "database-recovery"
+      - Key: "Purpose"
+        Value: "disaster-recovery"
+    user_data:
+      script_path: "examples/database_setup.sh"
+    volumes:
+      # Method 1: Create new volume for logs
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdf"
+        mount_point: "/var/log/mysql"
+        filesystem: "ext4"
+        encrypted: true
+      
+      # Method 2: Restore database from production snapshot
+      - snapshot_id: "snap-1234567890abcdef0"  # Production database snapshot
+        device: "/dev/sdg"
+        mount_point: "/var/lib/mysql"
+        mount_options: "defaults,noatime"
+        # Note: size, type, encryption, and filesystem inherited from snapshot
+      
+      # Method 2: Restore backup data from snapshot
+      - snapshot_id: "snap-abcdef1234567890"  # Backup data snapshot
+        device: "/dev/sdh"
+        mount_point: "/backup"
+        mount_options: "defaults"
+
+  - name: "development-clone"
+    instance_type: "t3.small"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "spot"
+    spot_price: "0.05"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-87654321"
+    tags:
+      - Key: "Environment"
+        Value: "development"
+      - Key: "Purpose"
+        Value: "testing-clone"
+    # Idle shutdown for development instance
+    idle_shutdown:
+      cpu_threshold: 5.0
+      evaluation_minutes: 30
+      action: "stop"
+    volumes:
+      # Clone production data for testing
+      - snapshot_id: "snap-production-data"
+        device: "/dev/sdf"
+        mount_point: "/data"
+        mount_options: "defaults"
+      
+      # New volume for development logs
+      - size: 20
+        type: "gp3"
+        device: "/dev/sdg"
+        mount_point: "/dev-logs"
+        filesystem: "ext4"
+        encrypted: false
+
+  - name: "migration-server"
+    instance_type: "t3.large"
+    ami_id: "ami-0c02fb55956c7d316"
+    market_type: "on-demand"
+    key_name: "my-key-pair"
+    security_groups:
+      - "sg-migration"
+    tags:
+      - Key: "Environment"
+        Value: "migration"
+      - Key: "Purpose"
+        Value: "data-migration"
+    volumes:
+      # Restore multiple snapshots for migration
+      - snapshot_id: "snap-legacy-db1"
+        device: "/dev/sdf"
+        mount_point: "/legacy/db1"
+        
+      - snapshot_id: "snap-legacy-db2"  
+        device: "/dev/sdg"
+        mount_point: "/legacy/db2"
+        
+      - snapshot_id: "snap-legacy-files"
+        device: "/dev/sdh"
+        mount_point: "/legacy/files"
+      
+      # New volume for migration workspace
+      - size: 200
+        type: "gp3"
+        device: "/dev/sdi"
+        mount_point: "/migration-workspace"
+        filesystem: "xfs"
+        encrypted: true
+
+# Profile configuration (optional)
+profile: "default"
+region: "us-east-1"
