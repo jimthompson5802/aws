@@ -15,7 +15,7 @@ import argparse
 import logging
 import sys
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import yaml
 import boto3
 from botocore.exceptions import ClientError
@@ -24,7 +24,7 @@ from botocore.exceptions import ClientError
 class AWSResourceManager:
     """Manages AWS EC2 instances and EBS volumes with idempotency and rollback support."""
 
-    def __init__(self, region: str = "us-east-1", profile: str = None):
+    def __init__(self, region: str = "us-east-1", profile: Optional[str] = None):
         """Initialize the AWS resource manager.
 
         Args:
@@ -179,7 +179,103 @@ class AWSResourceManager:
                         f"iam_role must be a non-empty string in instance {i}"
                     )
 
+            # Validate volume specifications including mount points
+            if "volumes" in instance:
+                for j, volume in enumerate(instance["volumes"]):
+                    self._validate_volume_spec(volume, i, j)
+
         self.logger.info("Specification validation passed")
+
+    def _validate_volume_spec(
+        self, volume_spec: Dict[str, Any], instance_idx: int, volume_idx: int
+    ) -> None:
+        """Validate volume specification including mount points.
+
+        Args:
+            volume_spec: Volume specification to validate
+            instance_idx: Instance index for error reporting
+            volume_idx: Volume index for error reporting
+        """
+        # Check required fields
+        required_fields = ["size"]
+        for field in required_fields:
+            if field not in volume_spec:
+                raise ValueError(
+                    f"Volume specification missing required field '{field}' "
+                    f"in instance {instance_idx}, volume {volume_idx}"
+                )
+
+        # Validate size
+        size = volume_spec["size"]
+        if not isinstance(size, int) or size <= 0:
+            raise ValueError(
+                f"Volume size must be a positive integer in instance {instance_idx}, volume {volume_idx}"
+            )
+
+        # Validate volume type if specified
+        if "type" in volume_spec:
+            valid_types = ["gp2", "gp3", "io1", "io2", "st1", "sc1"]
+            if volume_spec["type"] not in valid_types:
+                raise ValueError(
+                    f"Invalid volume type '{volume_spec['type']}' in instance {instance_idx}, "
+                    f"volume {volume_idx}. Must be one of: {valid_types}"
+                )
+
+        # Validate mount point if specified
+        if "mount_point" in volume_spec:
+            mount_point = volume_spec["mount_point"]
+            if not isinstance(mount_point, str) or not mount_point.strip():
+                raise ValueError(
+                    f"Mount point must be a non-empty string in instance {instance_idx}, volume {volume_idx}"
+                )
+
+            if not mount_point.startswith("/"):
+                raise ValueError(
+                    f"Mount point must be an absolute path in instance {instance_idx}, volume {volume_idx}"
+                )
+
+            # Warn about potentially dangerous mount points
+            dangerous_paths = [
+                "/",
+                "/boot",
+                "/etc",
+                "/usr",
+                "/bin",
+                "/sbin",
+                "/lib",
+                "/lib64",
+            ]
+            if mount_point in dangerous_paths:
+                raise ValueError(
+                    f"Mount point '{mount_point}' is a reserved system directory "
+                    f"in instance {instance_idx}, volume {volume_idx}"
+                )
+
+        # Validate filesystem type if specified
+        if "filesystem" in volume_spec:
+            supported_filesystems = ["ext4", "xfs", "btrfs"]
+            if volume_spec["filesystem"] not in supported_filesystems:
+                raise ValueError(
+                    f"Unsupported filesystem '{volume_spec['filesystem']}' in instance {instance_idx}, "
+                    f"volume {volume_idx}. Supported: {supported_filesystems}"
+                )
+
+        # Validate mount options if specified
+        if "mount_options" in volume_spec:
+            mount_options = volume_spec["mount_options"]
+            if not isinstance(mount_options, str) or not mount_options.strip():
+                raise ValueError(
+                    f"Mount options must be a non-empty string in instance {instance_idx}, volume {volume_idx}"
+                )
+
+        # Validate device name if specified
+        if "device" in volume_spec:
+            device = volume_spec["device"]
+            if not isinstance(device, str) or not device.startswith("/dev/"):
+                raise ValueError(
+                    f"Device must be a valid device path (e.g., /dev/sdf) "
+                    f"in instance {instance_idx}, volume {volume_idx}"
+                )
 
     def _get_existing_resources(self, spec: Dict[str, Any]) -> Dict[str, List]:
         """Check for existing resources to ensure idempotency.
@@ -224,11 +320,131 @@ class AWSResourceManager:
 
         return existing
 
-    def _prepare_user_data(self, instance_spec: Dict[str, Any]) -> str:
-        """Prepare user data script for instance.
+    def _generate_volume_mount_script(self, instance_spec: Dict[str, Any]) -> str:
+        """Generate script commands to format and mount EBS volumes.
 
         Args:
-            instance_spec: Instance specification containing user data
+            instance_spec: Instance specification containing volume definitions
+
+        Returns:
+            Script content for mounting volumes
+        """
+        mount_commands = []
+
+        if "volumes" not in instance_spec:
+            return ""
+
+        volumes_with_mounts = [
+            v for v in instance_spec["volumes"] if "mount_point" in v
+        ]
+        if not volumes_with_mounts:
+            return ""
+
+        mount_commands.extend(
+            [
+                "# === AUTOMATIC VOLUME MOUNTING ===",
+                "echo 'Starting volume mounting process...'",
+                "",
+                "# Function to wait for device",
+                "wait_for_device() {",
+                "    local device=$1",
+                "    local timeout=300  # 5 minutes",
+                "    local count=0",
+                '    echo "Waiting for device $device to be available..."',
+                '    while [ ! -e "$device" ] && [ $count -lt $timeout ]; do',
+                "        sleep 1",
+                "        count=$((count + 1))",
+                "    done",
+                '    if [ ! -e "$device" ]; then',
+                '        echo "ERROR: Device $device not available after ${timeout}s"',
+                "        return 1",
+                "    fi",
+                '    echo "Device $device is available"',
+                "    return 0",
+                "}",
+                "",
+                "# Function to check if device is already formatted",
+                "is_formatted() {",
+                "    local device=$1",
+                '    blkid "$device" >/dev/null 2>&1',
+                "}",
+                "",
+            ]
+        )
+
+        for volume in volumes_with_mounts:
+            device = volume.get("device", "/dev/sdf")
+            mount_point = volume["mount_point"]
+            filesystem = volume.get("filesystem", "ext4")
+            mount_options = volume.get("mount_options", "defaults")
+
+            mount_commands.extend(
+                [
+                    f"# Mount {device} to {mount_point}",
+                    f"echo 'Processing volume: {device} -> {mount_point}'",
+                    "",
+                    "# Wait for device to be available",
+                    f"if ! wait_for_device '{device}'; then",
+                    f"    echo 'ERROR: Failed to mount {device} - device not available'",
+                    "    exit 1",
+                    "fi",
+                    "",
+                    "# Create mount point directory",
+                    f"mkdir -p '{mount_point}'",
+                    "",
+                    "# Format the volume if not already formatted",
+                    f"if ! is_formatted '{device}'; then",
+                    f"    echo 'Formatting {device} with {filesystem} filesystem...'",
+                    f"    mkfs.{filesystem} '{device}'",
+                    "    if [ $? -ne 0 ]; then",
+                    f"        echo 'ERROR: Failed to format {device}'",
+                    "        exit 1",
+                    "    fi",
+                    "else",
+                    f"    echo 'Device {device} is already formatted'",
+                    "fi",
+                    "",
+                    "# Mount the volume",
+                    f"echo 'Mounting {device} to {mount_point}...'",
+                    f"mount -o '{mount_options}' '{device}' '{mount_point}'",
+                    "if [ $? -ne 0 ]; then",
+                    f"    echo 'ERROR: Failed to mount {device} to {mount_point}'",
+                    "    exit 1",
+                    "fi",
+                    "",
+                    "# Add to fstab for persistence",
+                    f"if ! grep -q '^{device}' /etc/fstab; then",
+                    f"    echo '{device} {mount_point} {filesystem} {mount_options} 0 2' >> /etc/fstab",
+                    f"    echo 'Added {device} to /etc/fstab'",
+                    "else",
+                    f"    echo 'Entry for {device} already exists in /etc/fstab'",
+                    "fi",
+                    "",
+                    "# Set permissions (make accessible to ec2-user)",
+                    f"chown ec2-user:ec2-user '{mount_point}'",
+                    f"chmod 755 '{mount_point}'",
+                    "",
+                    f"echo 'Successfully mounted {device} to {mount_point}'",
+                    "",
+                ]
+            )
+
+        mount_commands.extend(
+            [
+                "echo 'Volume mounting process completed'",
+                "echo 'Current mounts:'",
+                "df -h",
+                "",
+            ]
+        )
+
+        return "\n".join(mount_commands)
+
+    def _prepare_user_data(self, instance_spec: Dict[str, Any]) -> str:
+        """Prepare user data script with volume mounting and user scripts.
+
+        Args:
+            instance_spec: Instance specification containing user data and volumes
 
         Returns:
             User data script content (base64 will be handled by boto3)
@@ -237,60 +453,121 @@ class AWSResourceManager:
             FileNotFoundError: If script file doesn't exist
             Exception: If script preparation fails
         """
-        if "user_data" not in instance_spec:
-            return ""
+        user_data_parts = [
+            "#!/bin/bash",
+            "# AWS Automation Script - User Data Execution",
+            f"# Instance: {instance_spec['name']}",
+            f"# Generated: {datetime.now().isoformat()}",
+            "",
+            "set -e  # Exit on any error",
+            "",
+            "# Set up logging",
+            'LOG_FILE="/var/log/user-data-execution.log"',
+            'exec > >(tee -a "$LOG_FILE")',
+            "exec 2>&1",
+            "",
+            'echo "===== User Data Script Execution Started ====="',
+            'echo "Timestamp: $(date)"',
+            f"echo \"Instance Name: {instance_spec['name']}\"",
+            'echo "=============================================="',
+            "",
+        ]
 
-        user_data = instance_spec["user_data"]
-
-        try:
-            if "script_path" in user_data:
-                # Load script from file
-                script_path = user_data["script_path"]
-                with open(script_path, "r") as f:
-                    script_content = f.read()
-                self.logger.info(f"Loaded user data script from {script_path}")
-            elif "inline_script" in user_data:
-                # Use inline script content
-                script_content = user_data["inline_script"]
-                self.logger.info("Using inline user data script")
-            else:
-                return ""
-
-            # Add logging wrapper to capture user data execution
-            wrapper_script = f"""#!/bin/bash
-# AWS Automation Script - User Data Execution
-# Instance: {instance_spec["name"]}
-# Generated: {datetime.now().isoformat()}
-
-LOG_FILE="/var/log/user-data-execution.log"
-exec > >(tee -a $LOG_FILE)
-exec 2>&1
-
-echo "===== User Data Script Execution Started ====="
-echo "Timestamp: $(date)"
-echo "Instance Name: {instance_spec["name"]}"
-echo "=============================================="
-
-# Original user script
-{script_content}
-
-echo "=============================================="
-echo "User Data Script Execution Completed"
-echo "Timestamp: $(date)"
-echo "Exit Code: $?"
-echo "=============================================="
-"""
-
-            return wrapper_script
-
-        except FileNotFoundError:
-            self.logger.error(
-                f"User data script file not found: {user_data.get('script_path')}"
+        # 1. Add volume mounting commands first (if volumes with mount points exist)
+        mount_script = self._generate_volume_mount_script(instance_spec)
+        if mount_script:
+            user_data_parts.extend(
+                [mount_script, 'echo "Volume mounting completed successfully"', ""]
             )
-            raise
-        except Exception as e:
-            self.logger.error(f"Failed to prepare user data script: {e}")
-            raise
+
+        # 2. Add user's custom script
+        user_data_config = instance_spec.get("user_data", {})
+        if user_data_config:
+            user_data_parts.extend(
+                [
+                    "# === USER CUSTOM SCRIPT ===",
+                    'echo "Starting user custom script..."',
+                    "",
+                ]
+            )
+
+            try:
+                if "script_path" in user_data_config:
+                    # Load script from file
+                    script_path = user_data_config["script_path"]
+                    with open(script_path, "r") as f:
+                        script_content = f.read()
+                    user_data_parts.append(script_content)
+                    self.logger.info(f"Loaded user data script from {script_path}")
+                elif "inline_script" in user_data_config:
+                    # Use inline script content
+                    script_content = user_data_config["inline_script"]
+                    user_data_parts.append(script_content)
+                    self.logger.info("Using inline user data script")
+            except FileNotFoundError:
+                self.logger.error(
+                    f"User data script file not found: {user_data_config.get('script_path')}"
+                )
+                raise
+            except Exception as e:
+                self.logger.error(f"Failed to load user data script: {e}")
+                raise
+
+        # 3. Add verification commands for volumes with mount points
+        volumes_with_mounts = [
+            v for v in instance_spec.get("volumes", []) if "mount_point" in v
+        ]
+        if volumes_with_mounts:
+            user_data_parts.extend(
+                [
+                    "",
+                    "# === MOUNT VERIFICATION ===",
+                    'echo "Verifying mounts..."',
+                    "df -h",
+                ]
+            )
+
+            # Check each mounted volume
+            for volume in volumes_with_mounts:
+                mount_point = volume["mount_point"]
+                user_data_parts.extend(
+                    [
+                        f"if mountpoint -q '{mount_point}'; then",
+                        f'    echo "✓ {mount_point} is properly mounted"',
+                        "else",
+                        f'    echo "✗ ERROR: {mount_point} is not mounted"',
+                        "    exit 1",
+                        "fi",
+                    ]
+                )
+
+            user_data_parts.extend(
+                ['echo "All mount points verified successfully"', ""]
+            )
+
+        # 4. Final completion message
+        user_data_parts.extend(
+            [
+                'echo "=============================================="',
+                'echo "User Data Script Execution Completed Successfully"',
+                'echo "Timestamp: $(date)"',
+                'echo "=============================================="',
+            ]
+        )
+
+        final_script = "\n".join(user_data_parts)
+
+        # Log volume mounting info if applicable
+        if volumes_with_mounts:
+            mount_info = [
+                f"{v.get('device', '/dev/sdf')} -> {v['mount_point']}"
+                for v in volumes_with_mounts
+            ]
+            self.logger.info(
+                f"Added volume mounting to user data: {', '.join(mount_info)}"
+            )
+
+        return final_script
 
     def _create_ec2_instance(self, instance_spec: Dict[str, Any]) -> str:
         """Create a single EC2 instance.

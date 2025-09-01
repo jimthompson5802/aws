@@ -20,11 +20,11 @@ instances:
     instance_type: "g6.2xlarge" #"t3.xlarge"
     ami_id: "ami-09ddf6b7d718bc247"  # deep learning
     market_type: "on-demand"
-    key_name: "MY-KEY-PAIR-PLACEHOLDER"  # Support SSH Connection 
-    security_groups:  # Security Group IDs
-      - "sg-SECURITY-GROUP-ID-PLACEHOLDER"
-    subnet_id: "subnet-SUBNET-ID-PLACEHOLDER"  # Subnet ID
-    iam_role: "EC2-IAM-ROLE-PLACEHOLDER"  # Support retrieving SSM parameters
+    key_name: "MY-KEY-PAIR"  # Optional: EC2 Key Pair name
+    security_groups:  # Optional: Security Group IDs
+      - "sg-SECURITY-GROUP-ID"
+    subnet_id: "subnet-SECURITY-SUBNET-ID"  # Optional: Subnet ID
+    iam_role: "MY-IAM-ROLE"  # although optional, needed to access SSM parameters
     user_data:
       inline_script: |
         #!/bin/bash
@@ -36,10 +36,12 @@ instances:
         yum install --allowerasing -y  htop curl wget gnupg2 pinentry
 
         sudo -iu ec2-user bash << EOF
+            echo "user specific configuration..."
             repo_name="gpu_testbed"
-            repo_dir=~/\${repo_name}
+            base_dir=~/code
+            repo_dir=\${base_dir}/\${repo_name}
             git_user="Jim Thompson"
-            git_email="EMAIL-ADDRESS"
+            git_email="MY-EMAIL-ADDRESS"
 
             # Configure GPG
             echo "Configuring GPG..."
@@ -49,11 +51,11 @@ instances:
             echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
 
             # get gpg keys and key id from AWS SSM Parameter Store
-            aws ssm get-parameter --name "/PARAMETER/SECRET-GPG-KEY" --with-decryption --query "Parameter.Value" --output text | gpg --import
+            aws ssm get-parameter --name "/PARAMETER/GPG-SECRET-KEY" --with-decryption --query "Parameter.Value" --output text | gpg --import
 
-            aws ssm get-parameter --name "/PARAMETER/GITHUB-GPG-PUBLIC-KEY" --with-decryption --query "Parameter.Value" --output text | gpg --import
+            aws ssm get-parameter --name "/PARAMETER/GPG-PUBLIC-KEY" --with-decryption --query "Parameter.Value" --output text | gpg --import
 
-            GPG_KEY_ID=$(aws ssm get-parameter --name "/PARAMETER/GITHUB-GPG-KEY-ID" --with-decryption --query "Parameter.Value" --output text)
+            GPG_KEY_ID=$(aws ssm get-parameter --name "/PARAMETER/GPG-KEY-ID" --with-decryption --query "Parameter.Value" --output text)
 
             # Start gpg-agent
             gpg-agent --daemon --default-cache-ttl 3600
@@ -62,7 +64,8 @@ instances:
             echo "Checking if repository \${repo_dir} exists..."
             if [ ! -d "\${repo_dir}" ]; then
                 echo "Cloning repository in \${repo_dir}"
-                git clone "https://github.com/jimthompson5802/\${repo_name}.git"
+                cd \${base_dir}
+                git clone "http://github.com/jimthompson5802/\${repo_name}.git"
                 cd \${repo_dir}
                 echo "Setting git user configuration for \${git_user} with \${git_email}"
                 git config user.name "\${git_user}"
@@ -75,7 +78,7 @@ instances:
             fi
         EOF
 
-        echo "Server setup completed!"
+        echo "Server setup complete"
 
     # CloudWatch idle shutdown configuration
     idle_shutdown:
@@ -86,9 +89,19 @@ instances:
       - Key: "Environment"
         Value: "testing"
     volumes:  # Optional: Additional EBS volumes
-      - size: 50
+      - size: 20
         type: "gp3"
         device: "/dev/sdf"
+        mount_point: "/home/ec2-user/code"      # Automatically mounted here
+        filesystem: "ext4"                 # Formatted with ext4
+        mount_options: "defaults,noatime"  # Optimized for database
+        encrypted: true
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdg"
+        mount_point: "/home/ec2-user/data"      # Automatically mounted here
+        filesystem: "ext4"                 # Formatted with ext4
+        mount_options: "defaults,noatime"  # Optimized for database
         encrypted: true
 ```
 
@@ -135,12 +148,18 @@ python script.py monitor-alarms --spec setup/gpu_setup.yaml --region AWS-REGION-
 ```mermaid
 flowchart LR
     MacBook([MacBook<br/>VSCode Local])
-
     subgraph AWS
         direction TB
-        EC2[EC2 Instance: gpu-instance<br/>VSCode Remote]
-        EBS[(EBS Volume: 50GB gp3)]
-        EC2 <--> EBS
+        subgraph GPU-Compute
+            direction TB
+            EC2GPU[EC2 Instance: gpu-instance<br/>VSCode Remote]
+            EBS2R[(EBS Root Volume: <br/>  Mount: /)]
+            EBS2C[(EBS Code Volume: <br/> 20G <br/> Mount: ~/code)]
+            EBS2D[(EBS Data Volume: <br/> 50G <br/> Mount: ~/data)]
+            EC2GPU <--> EBS2R
+            EC2GPU <--> EBS2C
+            EC2GPU <--> EBS2D
+        end
     end
 
     MacBook -- SSH/VSCode <--> AWS

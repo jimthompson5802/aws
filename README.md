@@ -122,6 +122,18 @@ instances:
         device: "/dev/sdf"
 ```
 
+### Automatic Volume Management Benefits
+
+The mount point specification feature provides several key benefits:
+
+- **Zero Configuration**: Volumes are automatically formatted, mounted, and configured for persistence
+- **Production Ready**: Includes error handling, device waiting, and verification steps
+- **Flexible**: Supports multiple filesystem types and custom mount options
+- **Safe**: Validates mount points and prevents mounting to dangerous system directories
+- **Persistent**: Automatically configures `/etc/fstab` for persistence across reboots
+- **User Friendly**: Sets appropriate permissions for `ec2-user` access
+- **Backward Compatible**: Existing volume specifications continue to work unchanged
+
 ## User Data Scripts
 
 The script supports two ways to specify user data for instance customization:
@@ -278,11 +290,58 @@ MIT License
 
 ```yaml
 volumes:
-  - size: 20              # Size in GB (required)
-    type: "gp3"           # Volume type: gp2, gp3, io1, io2, st1, sc1
-    device: "/dev/sdf"    # Device name
-    iops: 3000           # IOPS (for gp3, io1, io2)
-    encrypted: true      # Enable encryption
+  - size: 20                    # Size in GB (required)
+    type: "gp3"                 # Volume type: gp2, gp3, io1, io2, st1, sc1
+    device: "/dev/sdf"          # Device name
+    iops: 3000                  # IOPS (for gp3, io1, io2)
+    encrypted: true             # Enable encryption
+    mount_point: "/data"        # NEW: Mount point inside instance (optional)
+    filesystem: "ext4"          # NEW: Filesystem type (ext4, xfs, btrfs) (optional)
+    mount_options: "defaults,noatime"  # NEW: Mount options (optional)
+```
+
+#### Mount Point Features
+
+When `mount_point` is specified, the automation script will:
+- **Wait** for the EBS volume to be attached
+- **Format** the volume with the specified filesystem (if not already formatted)
+- **Mount** the volume to the specified directory
+- **Configure** `/etc/fstab` for persistent mounting across reboots
+- **Set permissions** to make the mount point accessible to `ec2-user`
+- **Verify** that all mount operations completed successfully
+
+**Supported filesystems**: `ext4` (default), `xfs`, `btrfs`
+**Default mount options**: `defaults`
+
+**Example volume configurations**:
+```yaml
+# Simple data volume
+volumes:
+  - size: 100
+    type: "gp3"
+    device: "/dev/sdf"
+    mount_point: "/data"
+    encrypted: true
+
+# Database volume with optimized settings
+volumes:
+  - size: 200
+    type: "io2"
+    device: "/dev/sdf"
+    iops: 2000
+    mount_point: "/var/lib/mysql"
+    filesystem: "ext4"
+    mount_options: "defaults,noatime"
+    encrypted: true
+
+# Log volume with XFS filesystem
+volumes:
+  - size: 50
+    type: "gp3"
+    device: "/dev/sdg"
+    mount_point: "/var/log/app"
+    filesystem: "xfs"
+    encrypted: true
 ```
 
 ## Usage
@@ -377,6 +436,46 @@ instances:
         type: "gp3"
         device: "/dev/sdf"
 ```
+
+### Instance with Automatic Volume Mounting
+
+```yaml
+instances:
+  - name: "database-server"
+    instance_type: "t3.medium"
+    ami_id: "ami-0c02fb55956c7d316"
+    key_name: "my-keypair"
+    security_groups:
+      - "sg-database"
+    volumes:
+      # Database data volume - automatically formatted and mounted
+      - size: 200
+        type: "io2"
+        device: "/dev/sdf"
+        iops: 2000
+        mount_point: "/var/lib/mysql"      # Auto-mounted here
+        filesystem: "ext4"                 # Auto-formatted
+        mount_options: "defaults,noatime"  # Performance optimized
+        encrypted: true
+      
+      # Log volume with different filesystem
+      - size: 50
+        type: "gp3"
+        device: "/dev/sdg"
+        mount_point: "/var/log/mysql"      # Auto-mounted here
+        filesystem: "xfs"                  # XFS filesystem
+        encrypted: true
+    user_data:
+      inline_script: |
+        #!/bin/bash
+        # Volumes are already mounted and ready to use!
+        yum install -y mysql-server
+        # MySQL data directory /var/lib/mysql is ready
+        # MySQL log directory /var/log/mysql is ready
+        systemctl start mysqld
+```
+
+For a complete example with multiple mount points, see: `example_with_mount_points.yaml`
 
 ### Instance with IAM Role
 
